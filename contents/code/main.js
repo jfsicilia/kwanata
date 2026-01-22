@@ -42,7 +42,7 @@ function sendWindowData(method, window) {
 // Responds to the windowActivated signal by sending the new activated window
 // info via DBus.
 windowActivated.connect(function(window) {
-    debug("Focus: " + window);
+    // debug("Focus: " + window);
     if (!window)
         return;
 
@@ -52,12 +52,12 @@ windowActivated.connect(function(window) {
 // Responds to the windowAdded signal by attaching a function to Respond 
 // to the captionChanged signal by sending the window info via DBus.
 workspace.windowAdded.connect(function(window) {
-    debug("Added window:" + window);
+    // debug("Added window:" + window);
 
     window.captionChanged.connect(function() {
         // Only cares of the current active window.
         if (window === workspace.activeWindow) {
-            debug("Caption changed on window: " + window);
+            // debug("Caption changed on window: " + window);
             sendWindowData(CAPTION_EVENT_METHOD, window);
         }
     });
