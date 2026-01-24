@@ -431,8 +431,11 @@ def main():
     )
 
     try:
-        GLib.MainLoop().run()
+        loop = GLib.MainLoop()
+        loop.run()
     except KeyboardInterrupt:
+        loop.quit()
+        kanata.close()
         log.info("Service finished by user")
         sys.exit(0)
 
