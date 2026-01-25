@@ -8,23 +8,23 @@ virtual_key = "vk_obsidian"
 
 [[app]]
 name = "foot"
+caption = "^Zellij"
+virtual_key = "vk_zellij"
+
+[[app]]
+name = "foot"
 caption = "Nvim$"
 virtual_key = "vk_nvim"
 
 [[app]]
 name = "konsole"
-caption = "nvim — Konsole$"
-virtual_key = "vk_nvim"
-
-[[app]]
-name = "foot"
-caption = "^Zellij"
+caption = "zellij — Konsole$"
 virtual_key = "vk_zellij"
 
 [[app]]
 name = "konsole"
-caption = "zellij — Konsole$"
-virtual_key = "vk_zellij"
+caption = "nvim — Konsole$"
+virtual_key = "vk_nvim"
 
 [[app]]
 name = "foot|konsole"
