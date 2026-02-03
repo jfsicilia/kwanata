@@ -29,3 +29,9 @@ virtual_key = "vk_nvim"
 [[app]]
 name = "foot|konsole"
 virtual_key = "vk_foot"
+
+[[app]]
+name = "dolphin"
+virtual_key = "vk_dolphin"
+
+
