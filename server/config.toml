@@ -1,37 +1,61 @@
+# focus_to_kanata.py reads this file.
+# The first app matching is the one
+# whose layer/virtual_keys are send
+# to kanata.
+#
+# Format:
+
+# [[app]]
+# name = "name_of_app regex"          # Optional.
+# class = "class_of_app regex"        # Optional.
+# caption = "title_of_window regex"   # Optional.
+# layer = "kanata_layer_name"         # Optional.
+# virtual_keys = ["vk1", "vk2", ...]  # Optional.
+
 [[app]]
 name = "chrome"
-virtual_key = "vk_chrome"
+virtual_keys = ["vk_chrome"]
 
 [[app]]
 name = "obsidian"
-virtual_key = "vk_obsidian"
+virtual_keys = ["vk_obsidian"]
+
+[[app]]
+name = "foot"
+caption = "^tmux.*(N|n)vim$"
+virtual_keys = ["vk_nvim", "vk_tmux"]
+
+[[app]]
+name = "foot"
+caption = "^tmux"
+virtual_keys = ["vk_tmux"]
 
 [[app]]
 name = "foot"
 caption = "^Zellij"
-virtual_key = "vk_zellij"
+virtual_keys = ["vk_zellij"]
 
 [[app]]
 name = "foot"
-caption = "Nvim$"
-virtual_key = "vk_nvim"
+caption = "(N|n)vim$"
+virtual_keys = ["vk_nvim"]
 
 [[app]]
 name = "konsole"
 caption = "zellij — Konsole$"
-virtual_key = "vk_zellij"
+virtual_keys = ["vk_zellij"]
 
 [[app]]
 name = "konsole"
 caption = "nvim — Konsole$"
-virtual_key = "vk_nvim"
+virtual_keys = ["vk_nvim"]
 
 [[app]]
 name = "foot|konsole"
-virtual_key = "vk_foot"
+virtual_keys = ["vk_foot"]
 
 [[app]]
 name = "dolphin"
-virtual_key = "vk_dolphin"
+virtual_keys = ["vk_dolphin"]
 
 

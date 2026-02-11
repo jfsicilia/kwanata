@@ -16,6 +16,7 @@ from pydbus import SessionBus
 DEFAULT_CONFIG_FILE = "config.toml"
 DEFAULT_KANATA_HOST = "127.0.0.1"
 DEFAULT_KANATA_PORT = 10101
+DEFAULT_KANATA_LAYER = "default_layer"
 
 # DBus communication constants used by KWanata KWin Script.
 KWANATA_DBUS_INTERFACE = "juan.sicilia.KWanata"
@@ -35,7 +36,8 @@ SECTION_APP = "app"
 FIELD_NAME = "name"
 FIELD_CLASS = "class"
 FIELD_CAPTION = "caption"
-FIELD_VK = "virtual_key"
+FIELD_VK = "virtual_keys"
+FIELD_LAYER = "layer"
 
 # Possible values for kanata's virtual key actions.
 KANATA_VIRTUAL_KEY_ACTIONS = {"Press", "Release", "Tap", "Toggle"}
@@ -297,34 +299,34 @@ class KWanataService:
     </node>
     """
 
-    def __init__(self, kanata_client, app_matcher: AppMatcher):
+    def __init__(self, kanata_client, app_matcher: AppMatcher, default_layer: str):
         self._kanata_client = kanata_client
-        self._last_virtual_key = ""
+        self._last_virtual_keys = []
+        self._default_layer = default_layer
+        self._last_layer = None
         self._app_matcher = app_matcher
 
     def _notifyKanata(self, dbus_msg):
         info = utils.parse_dbus_msg(dbus_msg)
 
-        virtual_key = self._app_matcher.find_match(
+        layer, virtual_keys = self._app_matcher.find_match(
             info[FIELD_NAME], info[FIELD_CLASS], info[FIELD_CAPTION]
         )
 
-        # If app is not managed, clear previous virtual key and return.
-        if not virtual_key:
-            if self._last_virtual_key:
-                self._kanata_client.act_on_fake_key((self._last_virtual_key, "Release"))
-            self._last_virtual_key = ""
-            return
+        # Change layer needed?
+        if layer != self._last_layer:
+            self._kanata_client.change_layer(layer if layer else self._default_layer)
+            self._last_layer = layer
 
-        # If current vitual_key is the same as the last one, nothing must be done.
-        if self._last_virtual_key == virtual_key:
-            return
-
-        # New app in focus!
-        if self._last_virtual_key:
-            self._kanata_client.act_on_fake_key((self._last_virtual_key, "Release"))
-        self._kanata_client.act_on_fake_key((virtual_key, "Press"))
-        self._last_virtual_key = virtual_key
+        # Change virtual_key needed?
+        if virtual_keys != self._last_virtual_keys:
+            if self._last_virtual_keys:
+                for vk in self._last_virtual_keys:
+                    self._kanata_client.act_on_fake_key((vk, "Release"))
+            if virtual_keys:
+                for vk in virtual_keys:
+                    self._kanata_client.act_on_fake_key((vk, "Press"))
+            self._last_virtual_keys = virtual_keys
 
     def notifyCaptionChanged(self, dbus_msg):
         log.debug("Caption changed..." + dbus_msg)
@@ -359,7 +361,8 @@ class AppMatcher:
                         FIELD_CAPTION: re.compile(entry[FIELD_CAPTION])
                         if FIELD_CAPTION in entry
                         else MATCH_ALL_RE,
-                        FIELD_VK: entry[FIELD_VK],
+                        FIELD_VK: entry.get(FIELD_VK, []),
+                        FIELD_LAYER: entry.get(FIELD_LAYER),
                     }
                     self._apps_rules.append(rule)
                     log.debug(f"Loaded rule: {rule}")
@@ -367,7 +370,9 @@ class AppMatcher:
         except Exception as e:
             log.info(f"Failed to load config file: {filepath} {e}. Running dry.")
 
-    def find_match(self, win_name, win_class, win_caption):
+    def find_match(
+        self, win_name, win_class, win_caption
+    ) -> Tuple[Optional[str], Optional[str]]:
         """Return the first virtual_key that matches the window properties."""
         for app_rule in self._apps_rules:
             # If the rule field is None, it acts as a wildcard (always True)
@@ -376,8 +381,8 @@ class AppMatcher:
             match_caption = app_rule[FIELD_CAPTION].search(win_caption)
 
             if match_name and match_class and match_caption:
-                return app_rule[FIELD_VK]
-        return None
+                return (app_rule[FIELD_LAYER], app_rule[FIELD_VK])
+        return (None, None)
 
 
 # ----------------------------
@@ -396,6 +401,12 @@ def main():
         type=int,
         default=DEFAULT_KANATA_PORT,
         help=f"Kanata's port (default: {DEFAULT_KANATA_PORT})",
+    )
+    parser.add_argument(
+        "-l",
+        "--default_layer",
+        default=DEFAULT_KANATA_LAYER,
+        help=f"Kanata's default_layer (default: {DEFAULT_KANATA_LAYER})",
     )
     parser.add_argument(
         "-c",
@@ -423,7 +434,8 @@ def main():
     kanata = KanataClient(utils.validate_port(f"{args.host}:{args.port}"))
 
     bus.publish(
-        KWANATA_DBUS_INTERFACE, (KWANATA_DBUS_PATH, KWanataService(kanata, app_matcher))
+        KWANATA_DBUS_INTERFACE,
+        (KWANATA_DBUS_PATH, KWanataService(kanata, app_matcher, args.default_layer)),
     )
 
     log.info(
