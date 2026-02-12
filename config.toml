@@ -28,12 +28,12 @@ virtual_keys = ["vk_nvim", "vk_tmux"]
 [[app]]
 name = "foot"
 caption = "^tmux"
-virtual_keys = ["vk_tmux"]
+virtual_keys = ["vk_tmux", "vk_foot"]
 
 [[app]]
 name = "foot"
 caption = "^Zellij"
-virtual_keys = ["vk_zellij"]
+virtual_keys = ["vk_zellij", "vk_foot"]
 
 [[app]]
 name = "foot"
