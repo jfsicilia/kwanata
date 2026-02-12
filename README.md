@@ -54,7 +54,7 @@ sudo apt install python3-dbus
 
 ## Configuration
 
-Rules are defined in `server/config.toml` as an ordered list of `[[app]]` entries. First match wins.
+Rules are defined in `config.toml` as an ordered list of `[[app]]` entries. First match wins.
 
 ```toml
 [[app]]
@@ -99,17 +99,17 @@ usage: focus_to_kanata.py [-h] [--host HOST] [--port PORT]
   --port PORT             Kanata port (default: 10101)
   -l, --default_layer     Fallback layer when no rule matches (default: default_layer)
   -c, --config            Path to TOML rules file (default: config.toml)
-  --kwin-script           Path to KWin JS file to inject (default: server/kwin_script.js)
+  --kwin-script           Path to KWin JS file to inject (default: kwin_script.js)
   -v, --verbose           Enable debug logging
 ```
 
 ## Running as a systemd service
 
-A unit file is provided at `server/kwanata.service`. Edit the paths to match your installation, then:
+A unit file is provided at `kwanata.service`. Edit the paths to match your installation, then:
 
 ```bash
 # Copy or symlink the unit file
-cp server/kwanata.service ~/.config/systemd/user/kwanata.service
+cp kwanata.service ~/.config/systemd/user/kwanata.service
 
 # Enable and start
 systemctl --user daemon-reload
@@ -138,14 +138,10 @@ qdbus6 org.kde.KWin /KWin org.kde.KWin.queryWindowInfo
 ## Project structure
 
 ```
-server/
-  focus_to_kanata.py   # Python DBus service (main entry point)
-  kwin_script.js       # KWin script (dynamically injected at runtime)
-  config.toml          # App-matching rules
-  kwanata.service      # systemd user unit file
-contents/code/
-  main.js              # KWin script for manual kpackagetool6 installation (backup)
-metadata.json          # KWin script package metadata (for manual install)
+focus_to_kanata.py   # Python DBus service (main entry point)
+kwin_script.js       # KWin script (dynamically injected at runtime)
+config.toml          # App-matching rules
+kwanata.service      # systemd user unit file
 ```
 
 ## License

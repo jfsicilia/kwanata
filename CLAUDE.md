@@ -11,25 +11,25 @@ KWanata is a bridge between KDE Plasma's window focus events and the [Kanata](ht
 The system has two components connected via DBus:
 
 ```
-KWin → main.js (KWin Script) --DBus--> focus_to_kanata.py --TCP--> Kanata
+KWin → kwin_script.js (injected at runtime) --DBus--> focus_to_kanata.py --TCP--> Kanata
 ```
 
-1. **`contents/code/main.js`** — KWin script (JavaScript) that listens for `windowActivated` and `captionChanged` signals. Sends window properties (pid, resourceName, resourceClass, caption) over DBus to the Python service. Supports both KDE 5 (`clientActivated`) and KDE 6 (`windowActivated`).
+1. **`kwin_script.js`** — KWin script (JavaScript) dynamically injected into KWin at runtime by `focus_to_kanata.py` via the KWin Scripting DBus API. Listens for `windowActivated` and `captionChanged` signals. Sends window properties (pid, resourceName, resourceClass, caption) over DBus to the Python service. Supports both KDE 5 (`clientActivated`) and KDE 6 (`windowActivated`).
 
-2. **`server/focus_to_kanata.py`** — Python DBus service that receives window info, matches it against rules in `config.toml`, and sends layer/virtual-key commands to Kanata via a persistent TCP connection (default port 10101).
+2. **`focus_to_kanata.py`** — Python DBus service that injects the KWin script on startup, receives window info, matches it against rules in `config.toml`, and sends layer/virtual-key commands to Kanata via a persistent TCP connection (default port 10101). On shutdown it unloads the injected script from KWin.
 
-3. **`server/config.toml`** — Ordered list of `[[app]]` rules. First match wins. Each rule can specify regex patterns for `name`, `class`, `caption` (omitted fields match everything), plus a `layer` and/or `virtual_keys` array to activate.
+3. **`config.toml`** — Ordered list of `[[app]]` rules. First match wins. Each rule can specify regex patterns for `name`, `class`, `caption` (omitted fields match everything), plus a `layer` and/or `virtual_keys` array to activate.
 
-The DBus interface is `juan.sicilia.KWanata` with two methods: `notifyFocusChanged` and `notifyCaptionChanged`.
+The DBus interface is `com.pyroflexia.KWanata` with two methods: `notifyFocusChanged` and `notifyCaptionChanged`.
 
 ## Running
 
 ```bash
 # Run the Python service (requires Kanata running with -p 10101)
-python3 server/focus_to_kanata.py --port 10101 -c server/config.toml
+python3 focus_to_kanata.py --port 10101 -c config.toml
 
 # With debug logging
-python3 server/focus_to_kanata.py --port 10101 -c server/config.toml -v
+python3 focus_to_kanata.py --port 10101 -c config.toml -v
 
 # As a systemd user service
 systemctl --user start kwanata.service
@@ -46,6 +46,7 @@ These provide `gi.repository.GLib` and `pydbus`.
 
 ## Key Classes in `focus_to_kanata.py`
 
+- **`KWinScriptInjector`** — Injects/unloads `kwin_script.js` into KWin at runtime via the `org.kde.KWin /Scripting` DBus API
 - **`KanataClient`** — TCP client that sends JSON commands to Kanata (`ChangeLayer`, `ActOnFakeKey`, `RequestCurrentLayerName`, etc.)
 - **`AppMatcher`** — Loads `config.toml`, pre-compiles regex patterns, returns `(layer, virtual_keys)` for first matching rule
 - **`KWanataService`** — DBus service; tracks last layer/virtual-keys to avoid redundant Kanata commands
@@ -58,7 +59,7 @@ These provide `gi.repository.GLib` and `pydbus`.
 journalctl --user -u plasma-kwin_wayland.service -f -n 100
 
 # Monitor DBus messages to KWanata
-dbus-monitor "destination=juan.sicilia.KWanata"
+dbus-monitor "destination=com.pyroflexia.KWanata"
 
 # Query window info interactively
 qdbus6 org.kde.KWin /KWin org.kde.KWin.queryWindowInfo

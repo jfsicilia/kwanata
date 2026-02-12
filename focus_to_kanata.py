@@ -3,8 +3,9 @@
 DBus service that bridges KWin window focus events to Kanata.
 
 Receives window info (pid, name, class, caption) from the KWin script
-(main.js) via DBus, matches it against rules in config.toml, and sends
-layer/virtual-key commands to Kanata over a persistent TCP connection.
+(kwin_script.js, dynamically injected at runtime) via DBus, matches it
+against rules in config.toml, and sends layer/virtual-key commands to
+Kanata over a persistent TCP connection.
 """
 
 import argparse
