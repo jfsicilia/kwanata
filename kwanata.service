@@ -1,0 +1,13 @@
+[Unit]
+Description=KWanata KWin-Script to Kanata bridge.
+After=kanata.service
+Wants=kanata.service
+PartOf=kanata.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/_/workarea/dev/kde/KWanata/focus_to_kanata.py --port 10101 --verbose -c %h/_/workarea/dev/kde/KWanata/config.toml --kwin-script %h/_/workarea/dev/kde/KWanata/kwin_script.js
+Restart=no
+
+[Install]
+WantedBy=default.target
