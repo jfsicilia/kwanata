@@ -33,7 +33,7 @@ and a tutorial at:
 
 [pydbus tutorial](https://github.com/LEW21/pydbus/blob/master/doc/tutorial.rst)
 
-# Debuggin tips
+# Debugging tips
 
 ## Querying KWin window information
 
