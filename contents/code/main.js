@@ -1,3 +1,8 @@
+// KWin script that forwards window focus/caption events to the KWanata DBus
+// service. The Python service (focus_to_kanata.py) consumes these events to
+// drive Kanata layer/virtual-key switching.
+
+// Must match the DBus interface published by focus_to_kanata.py.
 const SERVICE = "juan.sicilia.KWanata";
 const PATH = "/juan/sicilia/KWanata";
 const INTERFACE = "juan.sicilia.KWanata";
@@ -6,7 +11,7 @@ const DEBUG_METHOD = "DEBUG"
 const FOCUS_EVENT_METHOD = "notifyFocusChanged";
 const CAPTION_EVENT_METHOD = "notifyCaptionChanged";
 
-// .windowActivated for KDE 6, .clientActivated for KDE 5.
+// KDE 6 renamed clientActivated → windowActivated.
 let windowActivated = workspace.windowActivated ?? workspace.clientActivated;
 
 // Sends a DBus message.
@@ -28,6 +33,9 @@ function debug(msg) {
 // params:
 //   method -- Method for the callDBus call.
 //   window -- Window to get the info from.
+// Build a "key: value" text block from window properties. The Python service
+// parses this with DBUS_MSG_FIELD_RE to extract name/class/caption for rule
+// matching.
 function sendWindowData(method, window) {
     let msg = `
         pid: ${window.pid}
@@ -49,10 +57,10 @@ windowActivated.connect(function(window) {
     sendWindowData(FOCUS_EVENT_METHOD, window);
 });
 
-// Responds to the windowAdded signal by attaching a function to Respond 
-// to the captionChanged signal by sending the window info via DBus.
+// Hook captionChange per window addition. Now every time a 
+// window changes its caption, an event is sent. 
+// Only sends the event if the window is the current active window.
 workspace.windowAdded.connect(function(window) {
-    // debug("Added window:" + window);
 
     window.captionChanged.connect(function() {
         // Only cares of the current active window.
