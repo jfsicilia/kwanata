@@ -1,8 +1,16 @@
 #!/usr/bin/python3
+"""
+DBus service that bridges KWin window focus events to Kanata.
+
+Receives window info (pid, name, class, caption) from the KWin script
+(main.js) via DBus, matches it against rules in config.toml, and sends
+layer/virtual-key commands to Kanata over a persistent TCP connection.
+"""
 
 import argparse
 import json
 import logging
+import os
 import re
 import socket
 import sys
@@ -18,9 +26,15 @@ DEFAULT_KANATA_HOST = "127.0.0.1"
 DEFAULT_KANATA_PORT = 10101
 DEFAULT_KANATA_LAYER = "default_layer"
 
-# DBus communication constants used by KWanata KWin Script.
-KWANATA_DBUS_INTERFACE = "juan.sicilia.KWanata"
-KWANATA_DBUS_PATH = "/juan/sicilia/KWanata"
+# DBus constants for the dynamically-injected KWin script.
+DBUS_INTERFACE = "com.pyroflexia.KWanata"
+DBUS_PATH = "/com/pyroflexia/KWanata"
+
+# Default path to the KWin script for dynamic injection.
+DEFAULT_KWIN_SCRIPT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "kwin_script.js"
+)
+
 # The dbus message that will be received has several lines with the format:
 #    field1: value
 #    field2: value
@@ -28,6 +42,7 @@ KWANATA_DBUS_PATH = "/juan/sicilia/KWanata"
 # (see FIELD_XXXX constants for the possible fields)
 DBUS_MSG_FIELD_RE = re.compile(r"^\s*(\w+):\s*(.*)$")
 
+# Used as default for omitted rule fields — matches anything, acting as a wildcard.
 MATCH_ALL_RE = re.compile(r".*")
 
 # Toml file sections and fields. Also used for dbus messages, except for FIELD_VK
@@ -142,6 +157,68 @@ class utils:
 
 
 # ----------------------------
+# KWinScriptInjector
+# ----------------------------
+class KWinScriptInjector:
+    """Injects a KWin script at runtime via the KWin Scripting DBus API.
+
+    Uses org.kde.KWin /Scripting to loadScript/unloadScript, avoiding the
+    need for manual kpackagetool6 installation.
+    """
+
+    KWIN_BUS = "org.kde.KWin"
+    SCRIPTING_PATH = "/Scripting"
+
+    def __init__(self, bus):
+        self._bus = bus
+        self._script_path = None
+
+    def inject(self, filepath):
+        """Load and run a KWin script file. Returns True on success."""
+        abs_path = os.path.abspath(filepath)
+        if not os.path.isfile(abs_path):
+            log.warning("KWin script not found: %s — skipping injection", abs_path)
+            return False
+
+        try:
+            scripting = self._bus.get(self.KWIN_BUS, self.SCRIPTING_PATH)
+        except Exception as e:
+            log.warning("Cannot reach KWin Scripting DBus: %s — skipping injection", e)
+            return False
+
+        script_id = scripting.loadScript(abs_path)
+
+        if script_id == -1:
+            log.info("KWin script '%s' already loaded, reloading...", abs_path)
+            scripting.unloadScript(abs_path)
+            script_id = scripting.loadScript(abs_path)
+
+        if script_id == -1:
+            log.error("Failed to load KWin script from %s", abs_path)
+            return False
+
+        script_obj = self._bus.get(self.KWIN_BUS, f"/Scripting/Script{script_id}")
+        script_obj.run()
+        self._script_path = abs_path
+        log.info("Injected KWin script (ID: %d) from %s", script_id, abs_path)
+        return True
+
+    def remove(self):
+        """Unload the injected KWin script."""
+        if not self._script_path:
+            return False
+        try:
+            scripting = self._bus.get(self.KWIN_BUS, self.SCRIPTING_PATH)
+            result = scripting.unloadScript(self._script_path)
+            log.info("Unloaded KWin script '%s': %s", self._script_path, result)
+            self._script_path = None
+            return result
+        except Exception as e:
+            log.warning("Failed to unload KWin script: %s", e)
+            return False
+
+
+# ----------------------------
 # KanataClient
 # ----------------------------
 class KanataClient:
@@ -154,15 +231,17 @@ class KanataClient:
         self._connected = False
 
     def _connect(self):
+        """Connect to Kanata's TCP server. Lazy-called on first send()."""
         log.debug("Connecting to %s:%s", *self.addr)
         try:
             self._client.connect(self.addr)
+            # Disable Nagle's algorithm for low-latency command delivery.
             self._client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             self._client.settimeout(0.5)
             self._connected = True
 
-            # Send a dummy command to avoid the server doesn't error if the client
-            # closes without sending anything
+            # Kanata errors if a client connects and disconnects without sending
+            # anything, so issue a harmless query to satisfy that requirement.
             self.get_current_layer_name()
 
         except socket.error as e:
@@ -207,7 +286,12 @@ class KanataClient:
 
     def send(self, cmd: dict) -> Optional[str]:
         """
-        Sends cmd to kanata.
+        Send a JSON command to Kanata and return the first complete response line.
+
+        Kanata uses a newline-delimited JSON protocol: each message (request or
+        response) is a single JSON object followed by '\n'. Asynchronous events
+        (e.g. layer changes from other sources) may arrive between our request
+        and its response, so _flush_buffer() drains stale data first.
         """
         if not self._connected:
             self._connect()
@@ -218,6 +302,7 @@ class KanataClient:
         self._client.sendall(msg.encode("utf-8"))
         self._client.settimeout(0.05)
 
+        # Read until we get a complete line (ending in '\n').
         try:
             while "\n" not in self._buffer:
                 chunk = self._client.recv(1024)
@@ -228,7 +313,7 @@ class KanataClient:
             return None
 
         lines = self._buffer.split("\n")
-        self._buffer = lines[-1]  # Save incomplete part
+        self._buffer = lines[-1]  # Save incomplete part for next call
 
         for line in lines[:-1]:
             if line.strip():
@@ -282,61 +367,9 @@ class KanataClient:
         return {}
 
 
-# ----------------------------
-# KWanata D-Bus service
-# ----------------------------
-class KWanataService:
-    """
-    <node>
-      <interface name="juan.sicilia.KWanata">
-        <method name="notifyCaptionChanged">
-          <arg type="s" name="dbus_msg" direction="in"/>
-        </method>
-        <method name="notifyFocusChanged">
-          <arg type="s" name="dbus_msg" direction="in"/>
-        </method>
-      </interface>
-    </node>
-    """
-
-    def __init__(self, kanata_client, app_matcher: AppMatcher, default_layer: str):
-        self._kanata_client = kanata_client
-        self._last_virtual_keys = []
-        self._default_layer = default_layer
-        self._last_layer = None
-        self._app_matcher = app_matcher
-
-    def _notifyKanata(self, dbus_msg):
-        info = utils.parse_dbus_msg(dbus_msg)
-
-        layer, virtual_keys = self._app_matcher.find_match(
-            info[FIELD_NAME], info[FIELD_CLASS], info[FIELD_CAPTION]
-        )
-
-        # Change layer needed?
-        if layer != self._last_layer:
-            self._kanata_client.change_layer(layer if layer else self._default_layer)
-            self._last_layer = layer
-
-        # Change virtual_key needed?
-        if virtual_keys != self._last_virtual_keys:
-            if self._last_virtual_keys:
-                for vk in self._last_virtual_keys:
-                    self._kanata_client.act_on_fake_key((vk, "Release"))
-            if virtual_keys:
-                for vk in virtual_keys:
-                    self._kanata_client.act_on_fake_key((vk, "Press"))
-            self._last_virtual_keys = virtual_keys
-
-    def notifyCaptionChanged(self, dbus_msg):
-        log.debug("Caption changed..." + dbus_msg)
-        self._notifyKanata(dbus_msg)
-
-    def notifyFocusChanged(self, dbus_msg):
-        log.debug("Focus changed..." + dbus_msg)
-        self._notifyKanata(dbus_msg)
-
-
+# ----------------
+# AppMatcher class
+# ----------------
 class AppMatcher:
     """Matches apps rules with incoming dbus msg"""
 
@@ -373,9 +406,13 @@ class AppMatcher:
     def find_match(
         self, win_name, win_class, win_caption
     ) -> Tuple[Optional[str], Optional[str]]:
-        """Return the first virtual_key that matches the window properties."""
+        """Return (layer, virtual_keys) for the first matching rule.
+
+        Rules are checked in config.toml order — first match wins.
+        All specified fields must match (AND logic); omitted fields default
+        to MATCH_ALL_RE so they always pass.
+        """
         for app_rule in self._apps_rules:
-            # If the rule field is None, it acts as a wildcard (always True)
             match_name = app_rule[FIELD_NAME].search(win_name)
             match_class = app_rule[FIELD_CLASS].search(win_class)
             match_caption = app_rule[FIELD_CAPTION].search(win_caption)
@@ -386,10 +423,76 @@ class AppMatcher:
 
 
 # ----------------------------
+# KWanata D-Bus service
+# ----------------------------
+class KWanataService:
+    # DBus service that receives window events from the KWin script and
+    # forwards the appropriate layer/virtual-key changes to Kanata.
+    #
+    # The docstring below is the DBus introspection XML required by pydbus
+    # to expose the interface methods.
+    """
+    <node>
+      <interface name="com.pyroflexia.KWanata">
+        <method name="notifyCaptionChanged">
+          <arg type="s" name="dbus_msg" direction="in"/>
+        </method>
+        <method name="notifyFocusChanged">
+          <arg type="s" name="dbus_msg" direction="in"/>
+        </method>
+      </interface>
+    </node>
+    """
+
+    def __init__(self, kanata_client, app_matcher: AppMatcher, default_layer: str):
+        self._kanata_client = kanata_client
+        self._last_virtual_keys = []
+        self._default_layer = default_layer
+        self._last_layer = None
+        self._app_matcher = app_matcher
+
+    def _notifyKanata(self, dbus_msg):
+        """Match the window info against rules and update Kanata state.
+
+        Tracks previous layer and virtual keys to avoid sending redundant
+        commands (e.g. rapid focus events between windows of the same app).
+        """
+        info = utils.parse_dbus_msg(dbus_msg)
+
+        layer, virtual_keys = self._app_matcher.find_match(
+            info[FIELD_NAME], info[FIELD_CLASS], info[FIELD_CAPTION]
+        )
+
+        # Only switch layer if different from the last one sent.
+        if layer != self._last_layer:
+            self._kanata_client.change_layer(layer if layer else self._default_layer)
+            self._last_layer = layer
+
+        # Release old virtual keys before pressing new ones, so Kanata
+        # sees a clean transition (no overlapping key states).
+        if virtual_keys != self._last_virtual_keys:
+            if self._last_virtual_keys:
+                for vk in self._last_virtual_keys:
+                    self._kanata_client.act_on_fake_key((vk, "Release"))
+            if virtual_keys:
+                for vk in virtual_keys:
+                    self._kanata_client.act_on_fake_key((vk, "Press"))
+            self._last_virtual_keys = virtual_keys
+
+    def notifyCaptionChanged(self, dbus_msg):
+        log.debug("Caption changed..." + dbus_msg)
+        self._notifyKanata(dbus_msg)
+
+    def notifyFocusChanged(self, dbus_msg):
+        log.debug("Focus changed..." + dbus_msg)
+        self._notifyKanata(dbus_msg)
+
+
+# ----------------------------
 # Main loop
 # ----------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Servicio D-Bus para KWanata")
+    parser = argparse.ArgumentParser(description="D-Bus listener for KWanata service")
 
     parser.add_argument(
         "--host",
@@ -415,6 +518,11 @@ def main():
         help=f"Path to TOML rules file (default: {DEFAULT_CONFIG_FILE})",
     )
     parser.add_argument(
+        "--kwin-script",
+        default=DEFAULT_KWIN_SCRIPT,
+        help=f"Path to KWin JS file to inject (default: {DEFAULT_KWIN_SCRIPT})",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -433,20 +541,29 @@ def main():
 
     kanata = KanataClient(utils.validate_port(f"{args.host}:{args.port}"))
 
-    bus.publish(
-        KWANATA_DBUS_INTERFACE,
-        (KWANATA_DBUS_PATH, KWanataService(kanata, app_matcher, args.default_layer)),
-    )
+    service = KWanataService(kanata, app_matcher, args.default_layer)
+
+    # Publish DBus service (will listen to events from the dynamically injected
+    # KWin script).
+    bus.publish(DBUS_INTERFACE, (DBUS_PATH, service))
+
+    # Inject KWin script so window events start flowing over DBus.
+    injector = KWinScriptInjector(bus)
+    injector.inject(args.kwin_script)
 
     log.info(
         f"KWanata service listening D-Bus and forwarding to Kanata on {args.host}:{args.port}"
     )
 
+    # GLib.MainLoop is required by pydbus to dispatch incoming DBus calls.
+    loop = None
     try:
         loop = GLib.MainLoop()
         loop.run()
     except KeyboardInterrupt:
-        loop.quit()
+        injector.remove()
+        if loop:
+            loop.quit()
         kanata.close()
         log.info("Service finished by user")
         sys.exit(0)
