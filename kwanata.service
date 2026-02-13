@@ -1,3 +1,14 @@
+# To install: 
+#
+# systemctl --user enable ./kwanata.service
+#
+# This will create links to this file in ~/.config/systemd/user/ 
+#
+# If you change this file run this to reload it.
+#
+# systemctl --user daemon-reload
+# systemctl --user restart kwanata
+#
 [Unit]
 Description=KWanata KWin-Script to Kanata bridge
 After=plasma-workspace.target kanata.service
