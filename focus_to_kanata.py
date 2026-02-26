@@ -15,6 +15,8 @@ import os
 import re
 import socket
 import sys
+import threading
+from queue import Empty, Queue
 from typing import Any, Dict, NoReturn, Optional, Tuple, Union
 
 import tomllib
@@ -57,6 +59,9 @@ FIELD_LAYER = "layer"
 
 # Possible values for kanata's virtual key actions.
 KANATA_VIRTUAL_KEY_ACTIONS = {"Press", "Release", "Tap", "Toggle"}
+
+KANATA_IGNORED_MESSAGES = ["TapActivated", "HoldActivated"]
+KANATA_MESSAGE_PUSH = "MessagePush"
 
 log = logging.getLogger()
 
@@ -228,18 +233,26 @@ class KanataClient:
     def __init__(self, addr: Tuple[str, int]):
         self.addr = addr
         self._client: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._buffer = ""
         self._connected = False
+        self._running = False
+        self._response_queue: Queue[str] = Queue()
+        self._send_lock = threading.Lock()
 
     def _connect(self):
         """Connect to Kanata's TCP server. Lazy-called on first send()."""
-        log.debug("Connecting to %s:%s", *self.addr)
+        log.debug("KWanata: Connecting to %s:%s", *self.addr)
         try:
             self._client.connect(self.addr)
             # Disable Nagle's algorithm for low-latency command delivery.
             self._client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            self._client.settimeout(0.5)
             self._connected = True
+            self._running = True
+
+            # Start background reader thread.
+            self._reader_thread = threading.Thread(
+                target=self._reader_loop, daemon=True
+            )
+            self._reader_thread.start()
 
             # Kanata errors if a client connects and disconnects without sending
             # anything, so issue a harmless query to satisfy that requirement.
@@ -258,6 +271,7 @@ class KanataClient:
 
     def close(self):
         """Close the client socket connection gracefully."""
+        self._running = False
         if self._client:
             log.warning("Closing client socket to %s", self.addr)
             try:
@@ -265,63 +279,79 @@ class KanataClient:
             except OSError:
                 pass  # Socket may already be closed or unconnected
             self._client.close()
+        if hasattr(self, "_reader_thread"):
+            self._reader_thread.join(timeout=2)
 
-    def _flush_buffer(self):
-        """
-        Flushes any stale complete messages from the socket buffer before
-        sending a new command.
-        """
-        self._client.settimeout(0.01)
-        try:
-            while True:
-                chunk = self._client.recv(1024)
+    def _reader_loop(self):
+        """Background thread: read from socket, dispatch lines."""
+        buffer = ""
+        self._client.settimeout(0.5)
+        while self._running:
+            try:
+                chunk = self._client.recv(4096)
                 if not chunk:
+                    log.warning("Kanata closed the connection")
                     break
-                self._buffer += chunk.decode("utf-8")
-        except socket.timeout:
-            pass
+                buffer += chunk.decode("utf-8")
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    line = line.strip()
+                    if line:
+                        self._process_incoming_line(line)
+            except socket.timeout:
+                continue
+            except OSError:
+                if self._running:
+                    log.warning("Socket error in reader thread")
+                break
 
-        if "\n" in self._buffer:
-            parts = self._buffer.split("\n")
-            self._buffer = parts[-1]  # Keep only last incomplete piece
+    def _process_incoming_line(self, line: str):
+        """Route an incoming JSON line to the right handler."""
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            log.warning("Non-JSON line from Kanata: %s", line)
+            return
+
+        if KANATA_MESSAGE_PUSH in data:
+            self._on_message_push(data[KANATA_MESSAGE_PUSH].get("message", [""])[0])
+            return
+        if any(msg in data for msg in KANATA_IGNORED_MESSAGES):
+            return
+        log.debug(f"Kanata: {line}")
+        self._response_queue.put(line)
+
+    def _on_message_push(self, message: str):
+        if message.startswith("DEBUG:"):
+            log.debug(f"KanataDebug: {message[len('DEBUG:') :]}")
+            return
+        if message.startswith("APP:"):
+            log.debug(f"KanataApp: {message[len('APP:') :]}")
+            return
+
+        """Handle a Kanata push message. Easy to extend later."""
+        log.info("KanataMsg: %s", message)
 
     def send(self, cmd: dict) -> Optional[str]:
         """
-        Send a JSON command to Kanata and return the first complete response line.
+        Send a JSON command to Kanata and return the response.
 
-        Kanata uses a newline-delimited JSON protocol: each message (request or
-        response) is a single JSON object followed by '\n'. Asynchronous events
-        (e.g. layer changes from other sources) may arrive between our request
-        and its response, so _flush_buffer() drains stale data first.
+        The background reader thread continuously reads from the socket and
+        routes MessagePush messages to _on_message_push(), while command
+        responses are placed on _response_queue for this method to consume.
         """
         if not self._connected:
             self._connect()
-        logging.debug("Sending command: %s", cmd)
+        log.debug("KWanata: Sending command: %s", cmd)
         msg = json.dumps(cmd) + "\n"
 
-        self._flush_buffer()  # Discard old responses
-        self._client.sendall(msg.encode("utf-8"))
-        self._client.settimeout(0.05)
-
-        # Read until we get a complete line (ending in '\n').
-        try:
-            while "\n" not in self._buffer:
-                chunk = self._client.recv(1024)
-                if not chunk:
-                    break
-                self._buffer += chunk.decode("utf-8")
-        except socket.timeout:
-            return None
-
-        lines = self._buffer.split("\n")
-        self._buffer = lines[-1]  # Save incomplete part for next call
-
-        for line in lines[:-1]:
-            if line.strip():
-                logging.debug("Received response line: %s", line.strip())
-                return line.strip()
-
-        return None
+        with self._send_lock:
+            self._client.sendall(msg.encode("utf-8"))
+            try:
+                return self._response_queue.get(timeout=2)
+            except Empty:
+                log.warning("Timeout waiting for Kanata response to: %s", cmd)
+                return None
 
     def get_current_layer_name(self) -> str:
         data = self._parse_json_response(self.send({"RequestCurrentLayerName": {}}))
@@ -472,6 +502,7 @@ class KWanataService:
         # Release old virtual keys before pressing new ones, so Kanata
         # sees a clean transition (no overlapping key states).
         if virtual_keys != self._last_virtual_keys:
+            log.debug("KWin: New window detected..." + dbus_msg)
             if self._last_virtual_keys:
                 for vk in self._last_virtual_keys:
                     self._kanata_client.act_on_fake_key((vk, "Release"))
@@ -481,11 +512,9 @@ class KWanataService:
             self._last_virtual_keys = virtual_keys
 
     def notifyCaptionChanged(self, dbus_msg):
-        log.debug("Caption changed..." + dbus_msg)
         self._notifyKanata(dbus_msg)
 
     def notifyFocusChanged(self, dbus_msg):
-        log.debug("Focus changed..." + dbus_msg)
         self._notifyKanata(dbus_msg)
 
 
