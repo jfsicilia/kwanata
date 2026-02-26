@@ -58,4 +58,9 @@ virtual_keys = ["vk_foot"]
 name = "dolphin"
 virtual_keys = ["vk_dolphin"]
 
+[[app]]
+name = "xdg-desktop-portal-kde"
+caption = "All Files"
+virtual_keys = ["vk_dolphin"]
+
 
