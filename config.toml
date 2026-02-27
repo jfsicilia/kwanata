@@ -59,8 +59,37 @@ name = "dolphin"
 virtual_keys = ["vk_dolphin"]
 
 [[app]]
-name = "xdg-desktop-portal-kde"
-caption = "All Files"
+caption = "(All Files|Save File — Skanpage)"
 virtual_keys = ["vk_dolphin"]
 
 
+# Run-or-raise: triggered by Kanata push-msg "APP: <name>"
+# Only `name` is required. Defaults: class=name, command=name, process=command.
+
+[[run_or_raise]]
+name = "chrome"
+class = "google-chrome"
+command = "google-chrome-stable"
+process = "chrome"
+
+[[run_or_raise]]
+name = "obsidian"
+command = "flatpak run --branch=stable --arch=x86_64 --command=obsidian.sh --file-forwarding md.obsidian.Obsidian @@u %U @@"
+process = "obsidian"
+
+[[run_or_raise]]
+name = "terminal"
+class = "foot"
+command = "foot"
+
+[[run_or_raise]]
+name = "fileexplorer"
+class = "org.kde.dolphin"
+command = "dolphin"
+process = "dolphin$"
+
+[[run_or_raise]]
+name = "keepassxc"
+class = "org.keepassxc.KeePassXC"
+command = "keepassxc"
+process = "keepassxc$"

@@ -14,7 +14,9 @@ import logging
 import os
 import re
 import socket
+import subprocess
 import sys
+import tempfile
 import threading
 from queue import Empty, Queue
 from typing import Any, Dict, NoReturn, Optional, Tuple, Union
@@ -62,6 +64,112 @@ KANATA_VIRTUAL_KEY_ACTIONS = {"Press", "Release", "Tap", "Toggle"}
 
 KANATA_IGNORED_MESSAGES = ["TapActivated", "HoldActivated"]
 KANATA_MESSAGE_PUSH = "MessagePush"
+
+# Config section for run-or-raise entries.
+SECTION_RUN_OR_RAISE = "run_or_raise"
+
+# KWin script template for raising a window by resourceClass.
+# __CLASS__ is replaced at runtime with the target resourceClass.
+# Handles single match (raise it) and multiple matches (cycle by list order).
+KWIN_RAISE_SCRIPT_TEMPLATE = """\
+// This code was copied from ww raise or run project (apache 2.0 licensed). Many
+// thanks to contributors.
+function kwinactivateclient(clientClass, clientCaption, clientClassRegex, toggle) {
+    var clients = workspace.clientList ? workspace.clientList() : workspace.windowList();
+    var activeWindow = workspace.activeClient || workspace.activeWindow;
+    var compareToCaption = new RegExp(clientCaption || '', 'i');
+    var compareToClassRegex = clientClassRegex.length > 0 ? new RegExp(clientClassRegex) : null;
+    var compareToClass = clientClass;
+    var isCompareToClass = clientClass.length > 0;
+    var isCompareToRegex = compareToClassRegex !== null;
+    var matchingClients = [];
+
+    for (var i = 0; i < clients.length; i++) {
+        var client = clients[i];
+        var classCompare = (isCompareToClass && client.resourceClass == compareToClass);
+        var classRegexCompare = (isCompareToRegex && compareToClassRegex.exec(client.resourceClass));
+        var captionCompare = (!isCompareToClass && !isCompareToRegex && compareToCaption.exec(client.caption));
+        if (classCompare || classRegexCompare || captionCompare) {
+            matchingClients.push(client);
+        }
+    }
+
+    if (matchingClients.length === 1) {
+        var client = matchingClients[0];
+        if (activeWindow !== client) {
+            setActiveClient(client);
+        } else if (toggle) {
+            client.minimized = !client.minimized;
+        }
+    } else if (matchingClients.length > 1) {
+        // Check if the active window is one of the matching windows
+        var activeIsMatching = false;
+        for (var j = 0; j < matchingClients.length; j++) {
+            if (activeWindow === matchingClients[j]) {
+                activeIsMatching = true;
+                break;
+            }
+        }
+
+        // Always sort by stacking order
+        matchingClients.sort(function (a, b) {
+            return a.stackingOrder - b.stackingOrder;
+        });
+
+        if (activeIsMatching) {
+            // We're already in this app - cycle through windows (pick first)
+            const client = matchingClients[0];
+            setActiveClient(client);
+        } else {
+            // We're switching from another app - pick most recently active (last)
+            const client = matchingClients[matchingClients.length - 1];
+            setActiveClient(client);
+        }
+    }
+}
+
+function setActiveClient(client){
+    if (workspace.activeClient !== undefined) {
+        workspace.activeClient = client;
+    } else {
+        workspace.activeWindow = client;
+    }
+}
+kwinactivateclient('__CLASS__', '', '', false);
+"""
+
+KWIN_RAISE_SCRIPT_TEMPLATE2 = """\
+(function() {
+    var targetClass = "__CLASS__";
+    var windows = workspace.windowList();
+    var matches = [];
+
+    for (var i = 0; i < windows.length; i++) {
+        if (windows[i].resourceClass === targetClass && !windows[i].skipTaskbar) {
+            matches.push(windows[i]);
+        }
+    }
+
+    if (matches.length === 0) return;
+
+    if (matches.length === 1) {
+        workspace.activeWindow = matches[0];
+        return;
+    }
+
+    // Multiple matches: cycle to the next window after the active one.
+    var activeIdx = -1;
+    for (var i = 0; i < matches.length; i++) {
+        if (matches[i] === workspace.activeWindow) {
+            activeIdx = i;
+            break;
+        }
+    }
+
+    var nextIdx = (activeIdx + 1) % matches.length;
+    workspace.activeWindow = matches[nextIdx];
+})();
+"""
 
 log = logging.getLogger()
 
@@ -225,6 +333,108 @@ class KWinScriptInjector:
 
 
 # ----------------------------
+# AppRunner
+# ----------------------------
+class AppRunner:
+    """Run-or-raise apps triggered by Kanata push messages.
+
+    Loads [[run_or_raise]] entries from config.toml. When triggered:
+    - If the app's process is running, raises its window via a temporary
+      KWin script injection (fire-and-forget).
+    - If not running, launches it via subprocess.
+    """
+
+    def __init__(self, bus, config_filepath):
+        self._bus = bus
+        self._entries = {}
+        self.load_config(config_filepath)
+
+    def load_config(self, filepath):
+        self._entries = {}
+        try:
+            with open(filepath, "rb") as f:
+                data = tomllib.load(f)
+            for entry in data.get(SECTION_RUN_OR_RAISE, []):
+                name = entry.get("name")
+                if not name:
+                    log.warning("run_or_raise entry missing 'name', skipping")
+                    continue
+                self._entries[name] = {
+                    "class": entry.get("class", name),
+                    "command": entry.get("command", name),
+                    "process": entry.get("process", entry.get("command", name)),
+                }
+            if self._entries:
+                log.info("Loaded %d run_or_raise entries", len(self._entries))
+        except Exception as e:
+            log.warning("Failed to load run_or_raise config: %s", e)
+
+    def run_or_raise(self, name):
+        """Run an app if not running, or raise its window if it is."""
+        entry = self._entries.get(name)
+        if not entry:
+            log.warning("No run_or_raise entry for '%s'", name)
+            return
+
+        if self._is_running(entry["process"]):
+            log.info("Raising window for '%s' (class=%s)", name, entry["class"])
+            self._raise_window(entry["class"])
+        else:
+            log.info("Launching '%s' (command=%s)", name, entry["command"])
+            self._launch(entry["command"])
+
+    def _is_running(self, process_name):
+        result = subprocess.run(
+            ["pgrep", "-f", process_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return result.returncode == 0
+
+    def _launch(self, command):
+        subprocess.Popen(
+            command,
+            shell=True,
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def _raise_window(self, resource_class):
+        print("----------------------" + resource_class)
+        script_content = KWIN_RAISE_SCRIPT_TEMPLATE.replace("__CLASS__", resource_class)
+        tmp = None
+        try:
+            tmp = tempfile.NamedTemporaryFile(
+                delete=False, suffix=".js", prefix="kwanata_raise_"
+            )
+            tmp.write(script_content.encode("utf-8"))
+            tmp.close()
+
+            scripting = self._bus.get(
+                KWinScriptInjector.KWIN_BUS, KWinScriptInjector.SCRIPTING_PATH
+            )
+            script_id = scripting.loadScript(tmp.name)
+            if script_id == -1:
+                scripting.unloadScript(tmp.name)
+                script_id = scripting.loadScript(tmp.name)
+            if script_id == -1:
+                log.error("Failed to load raise script for class '%s'", resource_class)
+                return
+
+            script_obj = self._bus.get(
+                KWinScriptInjector.KWIN_BUS, f"/Scripting/Script{script_id}"
+            )
+            script_obj.run()
+            scripting.unloadScript(tmp.name)
+        except Exception as e:
+            log.error("Failed to raise window (class=%s): %s", resource_class, e)
+        finally:
+            if tmp and os.path.exists(tmp.name):
+                os.unlink(tmp.name)
+
+
+# ----------------------------
 # KanataClient
 # ----------------------------
 class KanataClient:
@@ -237,6 +447,16 @@ class KanataClient:
         self._running = False
         self._response_queue: Queue[str] = Queue()
         self._send_lock = threading.Lock()
+        self._on_app_callback = None
+        self._on_reload_callback = None
+
+    def set_app_callback(self, callback):
+        """Set callback for APP: push messages. Called with app name as argument."""
+        self._on_app_callback = callback
+
+    def set_reload_callback(self, callback):
+        """Set callback for RELOAD: push messages. Called with no arguments."""
+        self._on_reload_callback = callback
 
     def _connect(self):
         """Connect to Kanata's TCP server. Lazy-called on first send()."""
@@ -316,20 +536,29 @@ class KanataClient:
         if KANATA_MESSAGE_PUSH in data:
             self._on_message_push(data[KANATA_MESSAGE_PUSH].get("message", [""])[0])
             return
+        # Ignore some kanta messages to avoid cluttering.
         if any(msg in data for msg in KANATA_IGNORED_MESSAGES):
             return
         log.debug(f"Kanata: {line}")
         self._response_queue.put(line)
 
     def _on_message_push(self, message: str):
+        """Handle a Kanata push message."""
         if message.startswith("DEBUG:"):
             log.debug(f"KanataDebug: {message[len('DEBUG:') :]}")
             return
         if message.startswith("APP:"):
-            log.debug(f"KanataApp: {message[len('APP:') :]}")
+            app_name = message[len("APP:") :].strip()
+            log.info("KanataApp: %s", app_name)
+            if self._on_app_callback:
+                self._on_app_callback(app_name)
+            return
+        if message.startswith("RELOAD:"):
+            log.info("Kanata requested config reload")
+            if self._on_reload_callback:
+                self._on_reload_callback()
             return
 
-        """Handle a Kanata push message. Easy to extend later."""
         log.info("KanataMsg: %s", message)
 
     def send(self, cmd: dict) -> Optional[str]:
@@ -409,7 +638,12 @@ class AppMatcher:
         self.load_app_rules(filepath)
 
     def load_app_rules(self, filepath):
-        """Load and pre-compile regex rules from a TOML file."""
+        """Load and pre-compile regex rules from a TOML file.
+
+        Clears any previously loaded rules before loading, so this method
+        can be called again to reload the config.
+        """
+        self._apps_rules = []
         try:
             with open(filepath, "rb") as f:
                 data = tomllib.load(f)
@@ -570,6 +804,16 @@ def main():
     bus = SessionBus()
 
     kanata = KanataClient(utils.validate_port(f"{args.host}:{args.port}"))
+
+    app_runner = AppRunner(bus, args.config)
+    kanata.set_app_callback(app_runner.run_or_raise)
+
+    def reload_config():
+        log.info("Reloading config from %s", args.config)
+        app_matcher.load_app_rules(args.config)
+        app_runner.load_config(args.config)
+
+    kanata.set_reload_callback(reload_config)
 
     service = KWanataService(kanata, app_matcher, args.default_layer)
 
