@@ -1,6 +1,11 @@
 # focus_to_kanata.py reads this file.
-# The first app matching is the one
-# whose layer/virtual_keys are send
+
+# *************** KWANATA - KANATA configuration ******************
+
+# KWanata injects a script in KDE that gets information about a windows
+# whenever there is a change in whe window that its currently active.
+# It will check then this cofiguration, to determine how to report to kanata.
+# The first app matching is the one whose layer/virtual_keys are send
 # to kanata.
 #
 # Format:
@@ -11,6 +16,11 @@
 # caption = "title_of_window regex"   # Optional.
 # layer = "kanata_layer_name"         # Optional.
 # virtual_keys = ["vk1", "vk2", ...]  # Optional.
+#
+# name, class and caption are used to match the info of the current active 
+# window. layer and virtual_keys are sent to kanata if a match is detected.
+#
+# If more than one field to match is present, they all need to match.
 
 [[app]]
 name = "chrome"
@@ -62,9 +72,22 @@ virtual_keys = ["vk_dolphin"]
 caption = "(All Files|Save File — Skanpage)"
 virtual_keys = ["vk_dolphin"]
 
+# *************** KWANATA - Run Or Raise configuration ******************
 
 # Run-or-raise: triggered by Kanata push-msg "APP: <name>"
-# Only `name` is required. Defaults: class=name, command=name, process=command.
+# [[run_or_raise]] could  have these fields:
+# name -- Name of the app (required). 
+# class -- App's class (optional). It is a regex. It will be use to search 
+#          if the app is running.
+# caption -- App's caption (optional). It is a regex. It will be use to 
+#            search if the app is running.
+# command -- Command to launch the app (if omitted, name will be used as 
+#            command). It the app is not running command will run.
+# process -- Name of the process to check if the app is running (if omitted,
+#            command will be uses as process). It is a regex.
+#
+# Defaults: class="", caption="", command=name, process=command.
+# NOTE: At least caption or class should be defined to reach and app.
 
 [[run_or_raise]]
 name = "chrome"
@@ -73,14 +96,36 @@ command = "google-chrome-stable"
 process = "chrome"
 
 [[run_or_raise]]
+name = "chromeAI"
+class = "google-chrome"
+caption = "^AI|"
+command = "google-chrome-stable"
+process = "chrome"
+
+[[run_or_raise]]
 name = "obsidian"
+class = "obsidian"
 command = "flatpak run --branch=stable --arch=x86_64 --command=obsidian.sh --file-forwarding md.obsidian.Obsidian @@u %U @@"
 process = "obsidian"
 
 [[run_or_raise]]
 name = "terminal"
 class = "foot"
+# Don't want to iterate through terminal windows where nvim or claude code is running.
+caption = "^((?!(nvim|claude)).)*$"
 command = "foot"
+
+[[run_or_raise]]
+name = "nvim"
+caption = "Nvim$"
+command = "nvim"
+process = "nvim$"
+
+[[run_or_raise]]
+name = "claude_code"
+caption = "Claude Code$"
+command = "foot"
+process = "foot"
 
 [[run_or_raise]]
 name = "fileexplorer"
