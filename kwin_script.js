@@ -11,7 +11,7 @@ const SERVICE = "com.pyroflexia.KWanata";
 const PATH = "/com/pyroflexia/KWanata";
 const INTERFACE = "com.pyroflexia.KWanata";
 
-const DEBUG_METHOD = "DEBUG"
+const DEBUG_METHOD = "debug"
 const FOCUS_EVENT_METHOD = "notifyFocusChanged";
 const CAPTION_EVENT_METHOD = "notifyCaptionChanged";
 
@@ -54,7 +54,6 @@ function sendWindowData(method, window) {
 // Responds to the windowActivated signal by sending the new activated window
 // info via DBus.
 windowActivated.connect(function(window) {
-    // debug("Focus: " + window);
     if (!window)
         return;
 

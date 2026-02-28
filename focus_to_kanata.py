@@ -74,101 +74,64 @@ SECTION_RUN_OR_RAISE = "run_or_raise"
 KWIN_RAISE_SCRIPT_TEMPLATE = """\
 // This code was copied from ww raise or run project (apache 2.0 licensed). Many
 // thanks to contributors.
-function kwinactivateclient(clientClass, clientCaption, clientClassRegex, toggle) {
-    var clients = workspace.clientList ? workspace.clientList() : workspace.windowList();
-    var activeWindow = workspace.activeClient || workspace.activeWindow;
-    var compareToCaption = new RegExp(clientCaption || '', 'i');
-    var compareToClassRegex = clientClassRegex.length > 0 ? new RegExp(clientClassRegex) : null;
-    var compareToClass = clientClass;
-    var isCompareToClass = clientClass.length > 0;
-    var isCompareToRegex = compareToClassRegex !== null;
-    var matchingClients = [];
+function kwinActivateClient(clientClass, clientCaption) {
+    // Little hack to be KDE5 and KDE6 compatible.
+    let clients = workspace.clientList ? workspace.clientList() : workspace.windowList();
+    let activeWindow = workspace.activeClient || workspace.activeWindow;
 
+    // Compile regular expressions.
+    let clientClassRE = new RegExp(clientClass || '', 'i');
+    let clientCaptionRE = new RegExp(clientCaption || '', 'i');
+    let matchingClients = [];
     for (var i = 0; i < clients.length; i++) {
-        var client = clients[i];
-        var classCompare = (isCompareToClass && client.resourceClass == compareToClass);
-        var classRegexCompare = (isCompareToRegex && compareToClassRegex.exec(client.resourceClass));
-        var captionCompare = (!isCompareToClass && !isCompareToRegex && compareToCaption.exec(client.caption));
-        if (classCompare || classRegexCompare || captionCompare) {
+        let client = clients[i];
+        if (clientClassRE.exec(client.resourceClass) && clientCaptionRE.exec(client.caption)) {
             matchingClients.push(client);
         }
     }
+    if (matchingClients.length === 0)
+      return;
 
     if (matchingClients.length === 1) {
-        var client = matchingClients[0];
-        if (activeWindow !== client) {
-            setActiveClient(client);
-        } else if (toggle) {
-            client.minimized = !client.minimized;
+        if (activeWindow !== matchingClients[0]) {
+            setActiveClient(matchingClients[0]);
         }
-    } else if (matchingClients.length > 1) {
-        // Check if the active window is one of the matching windows
-        var activeIsMatching = false;
-        for (var j = 0; j < matchingClients.length; j++) {
-            if (activeWindow === matchingClients[j]) {
-                activeIsMatching = true;
-                break;
-            }
-        }
+        return;
+    }
 
-        // Always sort by stacking order
-        matchingClients.sort(function (a, b) {
-            return a.stackingOrder - b.stackingOrder;
-        });
-
-        if (activeIsMatching) {
-            // We're already in this app - cycle through windows (pick first)
-            const client = matchingClients[0];
-            setActiveClient(client);
-        } else {
-            // We're switching from another app - pick most recently active (last)
-            const client = matchingClients[matchingClients.length - 1];
-            setActiveClient(client);
+    // Check if the active window is one of the matching windows
+    let activeIsMatching = false;
+    for (var j = 0; j < matchingClients.length; j++) {
+        if (activeWindow === matchingClients[j]) {
+            activeIsMatching = true;
+            break;
         }
+    }
+    // Always sort by stacking order
+    matchingClients.sort(function (a, b) {
+        return a.stackingOrder - b.stackingOrder;
+    });
+    // Activate new window.
+    if (activeIsMatching) {
+        // We're already in this app - cycle through windows (pick first)
+        const client = matchingClients[0];
+        setActiveClient(client);
+    } else {
+        // We're switching from another app - pick most recently active (last)
+        const client = matchingClients[matchingClients.length - 1];
+        setActiveClient(client);
     }
 }
 
-function setActiveClient(client){
+function setActiveClient(client) {
     if (workspace.activeClient !== undefined) {
         workspace.activeClient = client;
     } else {
         workspace.activeWindow = client;
     }
 }
-kwinactivateclient('__CLASS__', '', '', false);
-"""
 
-KWIN_RAISE_SCRIPT_TEMPLATE2 = """\
-(function() {
-    var targetClass = "__CLASS__";
-    var windows = workspace.windowList();
-    var matches = [];
-
-    for (var i = 0; i < windows.length; i++) {
-        if (windows[i].resourceClass === targetClass && !windows[i].skipTaskbar) {
-            matches.push(windows[i]);
-        }
-    }
-
-    if (matches.length === 0) return;
-
-    if (matches.length === 1) {
-        workspace.activeWindow = matches[0];
-        return;
-    }
-
-    // Multiple matches: cycle to the next window after the active one.
-    var activeIdx = -1;
-    for (var i = 0; i < matches.length; i++) {
-        if (matches[i] === workspace.activeWindow) {
-            activeIdx = i;
-            break;
-        }
-    }
-
-    var nextIdx = (activeIdx + 1) % matches.length;
-    workspace.activeWindow = matches[nextIdx];
-})();
+kwinActivateClient('__CLASS__', '__CAPTION__');
 """
 
 log = logging.getLogger()
@@ -360,7 +323,8 @@ class AppRunner:
                     log.warning("run_or_raise entry missing 'name', skipping")
                     continue
                 self._entries[name] = {
-                    "class": entry.get("class", name),
+                    "class": entry.get("class", ""),
+                    "caption": entry.get("caption", ""),
                     "command": entry.get("command", name),
                     "process": entry.get("process", entry.get("command", name)),
                 }
@@ -377,8 +341,16 @@ class AppRunner:
             return
 
         if self._is_running(entry["process"]):
-            log.info("Raising window for '%s' (class=%s)", name, entry["class"])
-            self._raise_window(entry["class"])
+            log.info(
+                "Raising window for '%s' (class=%s, caption=%s)",
+                name,
+                entry["class"],
+                entry["caption"],
+            )
+            self._raise_window(
+                app_class=entry["class"],
+                app_caption=entry["caption"],
+            )
         else:
             log.info("Launching '%s' (command=%s)", name, entry["command"])
             self._launch(entry["command"])
@@ -400,9 +372,9 @@ class AppRunner:
             stderr=subprocess.DEVNULL,
         )
 
-    def _raise_window(self, resource_class):
-        print("----------------------" + resource_class)
-        script_content = KWIN_RAISE_SCRIPT_TEMPLATE.replace("__CLASS__", resource_class)
+    def _raise_window(self, app_class="", app_caption=""):
+        script_content = KWIN_RAISE_SCRIPT_TEMPLATE.replace("__CLASS__", app_class)
+        script_content = script_content.replace("__CAPTION__", app_caption)
         tmp = None
         try:
             tmp = tempfile.NamedTemporaryFile(
@@ -419,7 +391,9 @@ class AppRunner:
                 scripting.unloadScript(tmp.name)
                 script_id = scripting.loadScript(tmp.name)
             if script_id == -1:
-                log.error("Failed to load raise script for class '%s'", resource_class)
+                log.error(
+                    f"Failed to load raise script for class:'{app_class}' caption:'{app_caption}'",
+                )
                 return
 
             script_obj = self._bus.get(
@@ -428,7 +402,9 @@ class AppRunner:
             script_obj.run()
             scripting.unloadScript(tmp.name)
         except Exception as e:
-            log.error("Failed to raise window (class=%s): %s", resource_class, e)
+            log.error(
+                f"Failed to load raise script for class:'{app_class}' caption:'{app_caption}': {e}"
+            )
         finally:
             if tmp and os.path.exists(tmp.name):
                 os.unlink(tmp.name)
@@ -699,6 +675,9 @@ class KWanataService:
     """
     <node>
       <interface name="com.pyroflexia.KWanata">
+        <method name="debug">
+          <arg type="s" name="dbus_msg" direction="in"/>
+        </method>
         <method name="notifyCaptionChanged">
           <arg type="s" name="dbus_msg" direction="in"/>
         </method>
@@ -744,6 +723,9 @@ class KWanataService:
                 for vk in virtual_keys:
                     self._kanata_client.act_on_fake_key((vk, "Press"))
             self._last_virtual_keys = virtual_keys
+
+    def debug(self, dbus_msg):
+        log.debug("KWin-KWanata: " + dbus_msg)
 
     def notifyCaptionChanged(self, dbus_msg):
         self._notifyKanata(dbus_msg)
