@@ -37,8 +37,6 @@ cp kwin_script.js "$STATE_DIR/"
 echo "✅ KWin script template placed in $STATE_DIR"
 
 # 5. Install Systemd User Service
-# Dynamically update the ExecStart path to match the user's home
-sed -i "s|ExecStart=.*|ExecStart=$BIN_DIR/kwanata|g" kwanata.service
 cp kwanata.service "$SERVICE_DIR/"
 
 # 6. Reload Systemd daemon to recognize new service

@@ -42,9 +42,6 @@ fi
 
 # 5. Setup Systemd Service with absolute path
 if [ -f "$PROJECT_ROOT/kwanata.service" ]; then
-    # We update the ExecStart in the source file to point to your development bin
-    # Using %h for portability within the service file
-    sed -i "s|ExecStart=.*|ExecStart=%h/.local/bin/kwanata|g" "$PROJECT_ROOT/kwanata.service"
     ln -sf "$PROJECT_ROOT/kwanata.service" "$SERVICE_DIR/kwanata.service"
     echo "✅ Symlink created: $SERVICE_DIR/kwanata.service"
 fi
