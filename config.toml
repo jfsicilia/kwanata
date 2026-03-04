@@ -148,7 +148,7 @@ process = "obsidian"
 name = "terminal"
 class = "foot"
 # Don't want to iterate through terminal windows where nvim or claude code is running.
-caption = "^((?!(nvim|claude)).)*$"
+caption = "^((?!(nvim|claude code)).)*$"
 command = "foot"
 
 # Nvim app - When raised multiple times it will iterate through opened nvims.
