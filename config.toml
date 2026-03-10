@@ -89,50 +89,51 @@ virtual_keys = ["vk_dolphin"]
 # Defaults: class="", caption="", command=name, process=command.
 # NOTE: At least caption or class should be defined to reach and app.
 
-# Chrome app - When raised multiple times it will iterate through opened chrome windows.
-[[run_or_raise]]
-name = "chrome"
-class = "google-chrome"
-command = "google-chrome-stable"
-process = "chrome"
-
 # Chrome app - Mgmt window (It will find a window with an active tab with @Mgmt in its title).
 [[run_or_raise]]
 name = "chromeMgmt"
 class = "google-chrome"
 caption = "@Mgmt"
-command = "google-chrome-stable"
+command = "google-chrome-stable --window-name='@Mgmt'"
 process = "chrome"
 
 # Chrome app - Cloud window (It will find a window with an active tab with @Cloud in its title).
 [[run_or_raise]]
 name = "chromeCloud"
 class = "google-chrome"
-caption = "@Cloud - Google Chrome$"
-command = "google-chrome-stable"
+caption = "@Cloud"
+command = "google-chrome-stable --window-name='@Cloud'"
 process = "chrome"
 
 # Chrome app - AI window (It will find a window with an active tab with @AI in its title).
 [[run_or_raise]]
 name = "chromeAI"
 class = "google-chrome"
-caption = "@AI - Google Chrome$"
-command = "google-chrome-stable"
+caption = "@AI"
+command = "google-chrome-stable --window-name='@AI'"
 process = "chrome"
 
 # Chrome app - Banks window (It will find a window with an active tab with @Banks in its title).
 [[run_or_raise]]
 name = "chromeBanks"
 class = "google-chrome"
-caption = "@Banks - Google Chrome$"
-command = "google-chrome-stable"
+caption = "@Banks"
+command = "google-chrome-stable --window-name='@Banks'"
 process = "chrome"
 
 # Chrome app - Misc window (It will find a window with an active tab with no @Cloud|@Banks|@AI|@Mgmt in its title).
 [[run_or_raise]]
 name = "chromeMisc"
 class = "google-chrome"
-caption = "^((?!(@Banks|@AI|@Cloud|@Mgmt)).)*$"
+# caption = "^((?!(@Banks|@AI|@Cloud|@Mgmt)).)*$"
+caption = "@Misc"
+command = "google-chrome-stable --window-name='@Misc'"
+process = "chrome"
+
+# Chrome app - When raised multiple times it will iterate through opened chrome windows.
+[[run_or_raise]]
+name = "chrome"
+class = "google-chrome"
 command = "google-chrome-stable"
 process = "chrome"
 

@@ -32,6 +32,7 @@ DEFAULT_KANATA_PORT = 10101
 DEFAULT_KANATA_LAYER = "default_layer"
 
 # DBus constants for the dynamically-injected KWin script.
+DBUS_SERVICE = "com.pyroflexia.KWanata"
 DBUS_INTERFACE = "com.pyroflexia.KWanata"
 DBUS_PATH = "/com/pyroflexia/KWanata"
 
@@ -71,9 +72,13 @@ SECTION_RUN_OR_RAISE = "run_or_raise"
 # KWin script template for raising a window by resourceClass.
 # __CLASS__ is replaced at runtime with the target resourceClass.
 # Handles single match (raise it) and multiple matches (cycle by list order).
-KWIN_RAISE_SCRIPT_TEMPLATE = """\
+KWIN_RAISE_SCRIPT_TEMPLATE = f"""\
 // This code was copied from ww raise or run project (apache 2.0 licensed). Many
 // thanks to contributors.
+const KWANATA_SERVICE = "{DBUS_SERVICE}";
+const KWANATA_PATH = "{DBUS_PATH}";
+const KWANATA_INTERFACE = "{DBUS_INTERFACE}";
+
 function kwinActivateClient(clientClass, clientCaption) {
     // Little hack to be KDE5 and KDE6 compatible.
     let clients = workspace.clientList ? workspace.clientList() : workspace.windowList();
@@ -89,13 +94,16 @@ function kwinActivateClient(clientClass, clientCaption) {
             matchingClients.push(client);
         }
     }
-    if (matchingClients.length === 0)
-      return;
+    if (matchingClients.length === 0) {
+        sendRaiseResult(false, clientClass, clientCaption);
+        return;
+    }
 
     if (matchingClients.length === 1) {
         if (activeWindow !== matchingClients[0]) {
             setActiveClient(matchingClients[0]);
         }
+        sendRaiseResult(true, clientClass, clientCaption);
         return;
     }
 
@@ -121,6 +129,7 @@ function kwinActivateClient(clientClass, clientCaption) {
         const client = matchingClients[matchingClients.length - 1];
         setActiveClient(client);
     }
+    sendRaiseResult(true, clientClass, clientCaption);
 }
 
 function setActiveClient(client) {
@@ -129,6 +138,11 @@ function setActiveClient(client) {
     } else {
         workspace.activeWindow = client;
     }
+}
+
+function sendRaiseResult(success, clientClass, clientCaption) {
+    let msg = "class: " + clientClass + "\\ncaption: " + clientCaption + "\\nsuccess: " + success;
+    callDBus(KWANATA_SERVICE, KWANATA_PATH, KWANATA_INTERFACE, "notifyRaiseResult", msg);
 }
 
 kwinActivateClient('__CLASS__', '__CAPTION__');
@@ -302,14 +316,20 @@ class AppRunner:
     """Run-or-raise apps triggered by Kanata push messages.
 
     Loads [[run_or_raise]] entries from config.toml. When triggered:
-    - If the app's process is running, raises its window via a temporary
-      KWin script injection (fire-and-forget).
+    - If the app's process is running, tries to raise its window via a
+      temporary KWin script injection. If raising fails (no matching
+      window found), falls back to launching the app.
     - If not running, launches it via subprocess.
     """
+
+    # Timeout in seconds waiting for the raise result from KWin.
+    RAISE_TIMEOUT = 0.5
 
     def __init__(self, bus, config_filepath):
         self._bus = bus
         self._entries = {}
+        self._raise_event = threading.Event()
+        self._raise_success = False
         self.load_config(config_filepath)
 
     def load_config(self, filepath):
@@ -333,35 +353,40 @@ class AppRunner:
         except Exception as e:
             log.warning("Failed to load run_or_raise config: %s", e)
 
+    def on_raise_result(self, success):
+        """Called by KWanataService when a notifyRaiseResult DBus message arrives."""
+        self._raise_success = success
+        self._raise_event.set()
+
     def run_or_raise(self, name):
-        """Run an app if not running, or raise its window if it is."""
+        """Run an app if not running, or raise its window if it is.
+
+        If the process is running but the window cannot be raised (e.g. no
+        matching window found by class/caption), falls back to launching.
+        """
         entry = self._entries.get(name)
         if not entry:
             log.warning("No run_or_raise entry for '%s'", name)
             return
 
-        if self._is_running(entry["process"]):
-            log.info(
-                "Raising window for '%s' (class=%s, caption=%s)",
-                name,
-                entry["class"],
-                entry["caption"],
-            )
-            self._raise_window(
-                app_class=entry["class"],
-                app_caption=entry["caption"],
-            )
-        else:
-            log.info("Launching '%s' (command=%s)", name, entry["command"])
-            self._launch(entry["command"])
-
-    def _is_running(self, process_name):
-        result = subprocess.run(
-            ["pgrep", "-f", process_name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+        log.info(
+            "Raising window for '%s' (class=%s, caption=%s)",
+            name,
+            entry["class"],
+            entry["caption"],
         )
-        return result.returncode == 0
+
+        # Try to raise the app.
+        if self._raise_window(app_class=entry["class"], app_caption=entry["caption"]):
+            return  # App raised!
+
+        # Try to run the app.
+        log.info(
+            "Couldn't raise '%s', falling back to launch (command=%s)",
+            name,
+            entry["command"],
+        )
+        self._launch(entry["command"])
 
     def _launch(self, command):
         subprocess.Popen(
@@ -373,8 +398,11 @@ class AppRunner:
         )
 
     def _raise_window(self, app_class="", app_caption=""):
+        """Inject a KWin script to raise a window. Returns True if raised."""
         script_content = KWIN_RAISE_SCRIPT_TEMPLATE.replace("__CLASS__", app_class)
         script_content = script_content.replace("__CAPTION__", app_caption)
+        self._raise_event.clear()
+        self._raise_success = False
         tmp = None
         try:
             tmp = tempfile.NamedTemporaryFile(
@@ -394,17 +422,25 @@ class AppRunner:
                 log.error(
                     f"Failed to load raise script for class:'{app_class}' caption:'{app_caption}'",
                 )
-                return
+                return False
 
             script_obj = self._bus.get(
                 KWinScriptInjector.KWIN_BUS, f"/Scripting/Script{script_id}"
             )
             script_obj.run()
             scripting.unloadScript(tmp.name)
+
+            # Wait for the KWin script to send back the raise result via DBus.
+            if self._raise_event.wait(timeout=self.RAISE_TIMEOUT):
+                return self._raise_success
+            else:
+                log.warning("Timeout waiting for raise result from KWin")
+                return False
         except Exception as e:
             log.error(
                 f"Failed to load raise script for class:'{app_class}' caption:'{app_caption}': {e}"
             )
+            return False
         finally:
             if tmp and os.path.exists(tmp.name):
                 os.unlink(tmp.name)
@@ -684,6 +720,9 @@ class KWanataService:
         <method name="notifyFocusChanged">
           <arg type="s" name="dbus_msg" direction="in"/>
         </method>
+        <method name="notifyRaiseResult">
+          <arg type="s" name="dbus_msg" direction="in"/>
+        </method>
       </interface>
     </node>
     """
@@ -694,6 +733,11 @@ class KWanataService:
         self._default_layer = default_layer
         self._last_layer = None
         self._app_matcher = app_matcher
+        self._app_runner = None
+
+    def set_app_runner(self, app_runner):
+        """Set the AppRunner instance to receive raise results."""
+        self._app_runner = app_runner
 
     def _notifyKanata(self, dbus_msg):
         """Match the window info against rules and update Kanata state.
@@ -726,6 +770,18 @@ class KWanataService:
 
     def debug(self, dbus_msg):
         log.debug("KWin-KWanata: " + dbus_msg)
+
+    def notifyRaiseResult(self, dbus_msg):
+        info = utils.parse_dbus_msg(dbus_msg)
+        success = info.get("success", "false").lower() == "true"
+        log.debug(
+            "Raise result: success=%s (class=%s, caption=%s)",
+            success,
+            info.get("class", ""),
+            info.get("caption", ""),
+        )
+        if self._app_runner:
+            self._app_runner.on_raise_result(success)
 
     def notifyCaptionChanged(self, dbus_msg):
         self._notifyKanata(dbus_msg)
@@ -798,6 +854,7 @@ def main():
     kanata.set_reload_callback(reload_config)
 
     service = KWanataService(kanata, app_matcher, args.default_layer)
+    service.set_app_runner(app_runner)
 
     # Publish DBus service (will listen to events from the dynamically injected
     # KWin script).
