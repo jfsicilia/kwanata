@@ -72,13 +72,15 @@ SECTION_RUN_OR_RAISE = "run_or_raise"
 # KWin script template for raising a window by resourceClass.
 # __CLASS__ is replaced at runtime with the target resourceClass.
 # Handles single match (raise it) and multiple matches (cycle by list order).
-KWIN_RAISE_SCRIPT_TEMPLATE = f"""\
+KWIN_RAISE_SCRIPT_TEMPLATE = (
+    f"""\
 // This code was copied from ww raise or run project (apache 2.0 licensed). Many
 // thanks to contributors.
 const KWANATA_SERVICE = "{DBUS_SERVICE}";
 const KWANATA_PATH = "{DBUS_PATH}";
 const KWANATA_INTERFACE = "{DBUS_INTERFACE}";
-
+"""
+    + """\
 function kwinActivateClient(clientClass, clientCaption) {
     // Little hack to be KDE5 and KDE6 compatible.
     let clients = workspace.clientList ? workspace.clientList() : workspace.windowList();
@@ -147,6 +149,7 @@ function sendRaiseResult(success, clientClass, clientCaption) {
 
 kwinActivateClient('__CLASS__', '__CAPTION__');
 """
+)
 
 log = logging.getLogger()
 

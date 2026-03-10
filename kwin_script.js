@@ -1,11 +1,11 @@
 // KWin script that forwards window focus/caption events to the KWanata DBus
 // service. This is the dynamically-injected version — loaded at runtime by
-// focus_to_kanata.py via the KWin Scripting DBus API.
+// kwanata.py via the KWin Scripting DBus API.
 //
 // Uses a separate DBus interface from the manually-installed backup script
 // (contents/code/main.js) so both can coexist.
 
-// Must match the DBus interface published by focus_to_kanata.py for the
+// Must match the DBus interface published by kwanata.py for the
 // injected service.
 const SERVICE = "com.pyroflexia.KWanata";
 const PATH = "/com/pyroflexia/KWanata";

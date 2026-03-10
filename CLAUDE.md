@@ -11,12 +11,12 @@ KWanata is a bridge between KDE Plasma's window focus events and the [Kanata](ht
 The system has two components connected via DBus:
 
 ```
-KWin → kwin_script.js (injected at runtime) --DBus--> focus_to_kanata.py --TCP--> Kanata
+KWin → kwin_script.js (injected at runtime) --DBus--> kwanata.py --TCP--> Kanata
 ```
 
-1. **`kwin_script.js`** — KWin script (JavaScript) dynamically injected into KWin at runtime by `focus_to_kanata.py` via the KWin Scripting DBus API. Listens for `windowActivated` and `captionChanged` signals. Sends window properties (pid, resourceName, resourceClass, caption) over DBus to the Python service. Supports both KDE 5 (`clientActivated`) and KDE 6 (`windowActivated`).
+1. **`kwin_script.js`** — KWin script (JavaScript) dynamically injected into KWin at runtime by `kwanata.py` via the KWin Scripting DBus API. Listens for `windowActivated` and `captionChanged` signals. Sends window properties (pid, resourceName, resourceClass, caption) over DBus to the Python service. Supports both KDE 5 (`clientActivated`) and KDE 6 (`windowActivated`).
 
-2. **`focus_to_kanata.py`** — Python DBus service that injects the KWin script on startup, receives window info, matches it against rules in `config.toml`, and sends layer/virtual-key commands to Kanata via a persistent TCP connection (default port 10101). On shutdown it unloads the injected script from KWin.
+2. **`kwanata.py`** — Python DBus service that injects the KWin script on startup, receives window info, matches it against rules in `config.toml`, and sends layer/virtual-key commands to Kanata via a persistent TCP connection (default port 10101). On shutdown it unloads the injected script from KWin.
 
 3. **`config.toml`** — Ordered list of `[[app]]` rules. First match wins. Each rule can specify regex patterns for `name`, `class`, `caption` (omitted fields match everything), plus a `layer` and/or `virtual_keys` array to activate.
 
@@ -26,10 +26,10 @@ The DBus interface is `com.pyroflexia.KWanata` with two methods: `notifyFocusCha
 
 ```bash
 # Run the Python service (requires Kanata running with -p 10101)
-python3 focus_to_kanata.py --port 10101 -c config.toml
+python3 kwanata.py --port 10101 -c config.toml
 
 # With debug logging
-python3 focus_to_kanata.py --port 10101 -c config.toml -v
+python3 kwanata.py --port 10101 -c config.toml -v
 
 # As a systemd user service
 systemctl --user start kwanata.service
@@ -44,7 +44,7 @@ Python 3.11+ required (uses `tomllib`). System packages (not pip):
 
 These provide `gi.repository.GLib` and `pydbus`.
 
-## Key Classes in `focus_to_kanata.py`
+## Key Classes in `kwanata.py`
 
 - **`KWinScriptInjector`** — Injects/unloads `kwin_script.js` into KWin at runtime via the `org.kde.KWin /Scripting` DBus API
 - **`KanataClient`** — TCP client that sends JSON commands to Kanata (`ChangeLayer`, `ActOnFakeKey`, `RequestCurrentLayerName`, etc.)

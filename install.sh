@@ -13,14 +13,14 @@ echo "🚀 Starting Kwanata installation..."
 mkdir -p "$BIN_DIR" "$LIB_DIR" "$CONFIG_DIR" "$STATE_DIR" "$SERVICE_DIR"
 
 # 2. Deploy Python Daemon
-if [ -f "focus_to_kanata.py" ]; then
-    cp focus_to_kanata.py "$LIB_DIR/"
-    chmod +x "$LIB_DIR/focus_to_kanata.py"
+if [ -f "kwanata.py" ]; then
+    cp kwanata.py "$LIB_DIR/"
+    chmod +x "$LIB_DIR/kwanata.py"
     # Create symlink for easy CLI access
-    ln -sf "$LIB_DIR/focus_to_kanata.py" "$BIN_DIR/kwanata"
+    ln -sf "$LIB_DIR/kwanata.py" "$BIN_DIR/kwanata"
     echo "✅ Daemon installed to $LIB_DIR"
 else
-    echo "❌ Error: focus_to_kanata.py not found!"
+    echo "❌ Error: kwanata.py not found!"
     exit 1
 fi
 

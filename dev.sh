@@ -14,15 +14,15 @@ echo "🛠️  Setting up Kwanata in Development Mode (Symlinks)..."
 mkdir -p "$BIN_DIR" "$LIB_DIR" "$CONFIG_DIR" "$STATE_DIR" "$SERVICE_DIR"
 
 # 2. Link the Python Daemon
-if [ -f "$PROJECT_ROOT/focus_to_kanata.py" ]; then
+if [ -f "$PROJECT_ROOT/kwanata.py" ]; then
     # Link the source file to lib
-    ln -sf "$PROJECT_ROOT/focus_to_kanata.py" "$LIB_DIR/focus_to_kanata.py"
+    ln -sf "$PROJECT_ROOT/kwanata.py" "$LIB_DIR/kwanata.py"
     # Link to bin for global execution
-    ln -sf "$LIB_DIR/focus_to_kanata.py" "$BIN_DIR/kwanata"
-    chmod +x "$PROJECT_ROOT/focus_to_kanata.py"
-    echo "✅ Symlink created: $BIN_DIR/kwanata -> $PROJECT_ROOT/focus_to_kanata.py"
+    ln -sf "$LIB_DIR/kwanata.py" "$BIN_DIR/kwanata"
+    chmod +x "$PROJECT_ROOT/kwanata.py"
+    echo "✅ Symlink created: $BIN_DIR/kwanata -> $PROJECT_ROOT/kwanata.py"
 else
-    echo "❌ Error: focus_to_kanata.py not found in current directory!"
+    echo "❌ Error: kwanata.py not found in current directory!"
     exit 1
 fi
 

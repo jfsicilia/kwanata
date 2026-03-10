@@ -5,10 +5,10 @@ A bridge between KDE Plasma's window focus events and the [Kanata](https://githu
 ## How it works
 
 ```
-KWin --> kwin_script.js (injected at runtime) --DBus--> focus_to_kanata.py --TCP--> Kanata
+KWin --> kwin_script.js (injected at runtime) --DBus--> kwanata.py --TCP--> Kanata
 ```
 
-1. On startup, `focus_to_kanata.py` dynamically injects a JavaScript file into KWin via the KWin Scripting DBus API.
+1. On startup, `kwanata.py` dynamically injects a JavaScript file into KWin via the KWin Scripting DBus API.
 2. The injected script listens for `windowActivated` and `captionChanged` signals and sends window properties (pid, name, class, caption) over DBus.
 3. The Python service matches window info against rules in `config.toml` and sends layer/virtual-key commands to Kanata over a persistent TCP connection.
 
@@ -43,7 +43,7 @@ sudo apt install python3-dbus
 2. Run KWanata:
 
    ```bash
-   python3 focus_to_kanata.py --port 10101 -c config.toml
+   python3 kwanata.py --port 10101 -c config.toml
    ```
 
    The service will automatically inject the KWin script, listen for window events, and forward matching rules to Kanata. Use `-v` for debug logging.
@@ -91,7 +91,7 @@ All fields are optional. Omitted fields match everything (wildcard). At least on
 ## CLI options
 
 ```
-usage: focus_to_kanata.py [-h] [--host HOST] [--port PORT]
+usage: kwanata.py [-h] [--host HOST] [--port PORT]
                           [-l DEFAULT_LAYER] [-c CONFIG]
                           [--kwin-script KWIN_SCRIPT] [-v]
 
@@ -138,7 +138,7 @@ qdbus6 org.kde.KWin /KWin org.kde.KWin.queryWindowInfo
 ## Project structure
 
 ```
-focus_to_kanata.py   # Python DBus service (main entry point)
+kwanata.py           # Python DBus service (main entry point)
 kwin_script.js       # KWin script (dynamically injected at runtime)
 config.toml          # App-matching rules
 kwanata.service      # systemd user unit file
