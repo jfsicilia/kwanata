@@ -22,7 +22,8 @@ ExecStart=/usr/bin/python3 %h/.local/bin/kwanata \
   --port 10101 \
   --verbose \
   -c %h/.config/kwanata/config.toml \
-  --kwin-script %h/.local/state/kwanata/kwin_script.js
+  --kwin-script %h/.local/state/kwanata/kwin_window_notifier.js \
+  --kwin-raise-script %h/.local/state/kwanata/kwin_app_raiser.js
 
 Restart=no
 

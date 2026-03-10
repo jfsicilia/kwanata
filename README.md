@@ -1,34 +1,45 @@
 # KWanata
 
-A bridge between KDE Plasma's window focus events and the [Kanata](https://github.com/jtroo/kanata) keyboard remapper. KWanata switches Kanata layers and activates virtual keys based on the currently focused application.
+A KDE Plasma companion for the [Kanata](https://github.com/jtroo/kanata) keyboard remapper. KWanata provides two features:
+
+- **Focus-to-Kanata bridge** -- Automatically switches Kanata layers and activates virtual keys based on the currently focused application.
+- **Run-or-raise manager** -- Launches apps or raises their windows via keyboard shortcuts triggered through Kanata push messages.
 
 ## How it works
 
 ```
-KWin --> kwin_script.js (injected at runtime) --DBus--> kwanata.py --TCP--> Kanata
+KWin --> kwin_window_notifier.js (injected at runtime) --DBus--> kwanata.py --TCP--> Kanata
 ```
 
-1. On startup, `kwanata.py` dynamically injects a JavaScript file into KWin via the KWin Scripting DBus API.
-2. The injected script listens for `windowActivated` and `captionChanged` signals and sends window properties (pid, name, class, caption) over DBus.
-3. The Python service matches window info against rules in `config.toml` and sends layer/virtual-key commands to Kanata over a persistent TCP connection.
+On startup, `kwanata.py` dynamically injects a JavaScript file into KWin via the KWin Scripting DBus API and opens a persistent TCP connection to Kanata. From there it handles two flows:
+
+### Focus-to-Kanata
+
+1. The injected KWin script listens for `windowActivated` and `captionChanged` signals and sends window properties (pid, name, class, caption) over DBus.
+2. KWanata matches the window info against `[[app]]` rules in `config.toml` (first match wins) and sends the corresponding layer/virtual-key commands to Kanata.
+
+### Run-or-raise
+
+1. Kanata sends a `push-msg "APP:<name>"` command over TCP when a keyboard shortcut is pressed (See kanata `push-msg` function).
+2. KWanata looks up the name in the `[[run_or_raise]]` rules in `config.toml`.
+3. If a matching window is found (by class/caption), it is raised. If the app is already focused and there are multiple matching windows, it cycles through them.
+4. If no matching window is found, the app is launched via the configured command.
 
 ## Requirements
 
 - KDE Plasma 5 or 6 (KWin)
-- [Kanata](https://github.com/jtroo/kanata) running with TCP server enabled (Default port `-p 10101`)
+- [Kanata](https://github.com/jtroo/kanata) running with TCP server enabled (default port `-p 10101`)
 - Python 3.11+ (uses `tomllib`)
 - System packages (not pip):
 
 ```bash
 # Fedora
-sudo dnf install python3-gobject
-sudo dnf install python3-dbus
+sudo dnf install python3-gobject python3-dbus
 ```
 
 ```bash
 # Ubuntu
-sudo apt install python3-gi
-sudo apt install python3-dbus
+sudo apt install python3-gi python3-dbus
 ```
 
 ## Quick start
@@ -36,7 +47,6 @@ sudo apt install python3-dbus
 1. Start Kanata with the TCP server enabled:
 
    ```bash
-   # NOTE: Choose the port at own discretion.
    kanata -p 10101
    ```
 
@@ -46,15 +56,21 @@ sudo apt install python3-dbus
    python3 kwanata.py --port 10101 -c config.toml
    ```
 
-   The service will automatically inject the KWin script, listen for window events, and forward matching rules to Kanata. Use `-v` for debug logging.
+   Use `-v` for debug logging.
 
-3. Switch between windows -- Kanata layers and virtual keys will change according to your rules in `config.toml`.
+3. Switch between windows -- Kanata layers and virtual keys will change according to your `[[app]]` rules.
 
-4. Press `Ctrl+C` to stop. The injected KWin script is automatically unloaded on shutdown.
+4. Press keyboard shortcuts bound to Kanata `(push-msg "APP:<name>")` action -- KWanata will raise or launch the corresponding app from your `[[run_or_raise]]` rules.
+
+5. Press `Ctrl+C` to stop. The injected KWin script is automatically unloaded on shutdown.
 
 ## Configuration
 
-Rules are defined in `config.toml` as an ordered list of `[[app]]` entries. First match wins.
+All rules are defined in `config.toml`.
+
+### Focus-to-Kanata rules (`[[app]]`)
+
+An ordered list of `[[app]]` entries. First match wins.
 
 ```toml
 [[app]]
@@ -88,18 +104,60 @@ Each rule can specify:
 
 All fields are optional. Omitted fields match everything (wildcard). At least one of `layer` or `virtual_keys` should be specified for a rule to have an effect.
 
+### Run-or-raise rules (`[[run_or_raise]]`)
+
+Each entry maps a name (used in Kanata's `(push-msg "APP:<name>")`) to a window-matching rule and a launch command.
+
+```toml
+[[run_or_raise]]
+name = "chrome"
+class = "google-chrome"
+command = "google-chrome-stable"
+process = "chrome"
+
+[[run_or_raise]]
+name = "terminal"
+class = "foot"
+caption = "^((?!(nvim|claude code)).)*$"
+command = "foot"
+
+[[run_or_raise]]
+name = "nvim"
+caption = "(Nvim|nvim — Konsole)$"
+command = "nvim"
+process = "nvim$"
+```
+
+Each rule can specify:
+
+| Field     | Type   | Description                                                         |
+| --------- | ------ | ------------------------------------------------------------------- |
+| `name`    | string | **Required.** Identifier used in the Kanata `push-msg`              |
+| `class`   | regex  | Window resource class to match when raising                         |
+| `caption` | regex  | Window title to match when raising                                  |
+| `command` | string | Shell command to launch the app (defaults to `name`)                |
+| `process` | regex  | Process name to check if the app is running (defaults to `command`) |
+
+At least `class` or `caption` should be defined so KWanata can find the window to raise.
+
+### Live reload
+
+Kanata can trigger a config reload by sending `push-msg "RELOAD:"`. KWanata will re-read `config.toml` and apply the new rules without restarting.
+
 ## CLI options
 
 ```
 usage: kwanata.py [-h] [--host HOST] [--port PORT]
-                          [-l DEFAULT_LAYER] [-c CONFIG]
-                          [--kwin-script KWIN_SCRIPT] [-v]
+                  [-l DEFAULT_LAYER] [-c CONFIG]
+                  [--kwin-script KWIN_SCRIPT]
+                  [--kwin-raise-script KWIN_RAISE_SCRIPT] [-v]
 
   --host HOST             Kanata host (default: 127.0.0.1)
   --port PORT             Kanata port (default: 10101)
   -l, --default_layer     Fallback layer when no rule matches (default: default_layer)
   -c, --config            Path to TOML rules file (default: config.toml)
-  --kwin-script           Path to KWin JS file to inject (default: kwin_script.js)
+  --kwin-script           Path to KWin window notifier JS file (default: kwin_window_notifier.js)
+  --kwin-raise-script     Path to KWin raise JS template (default: kwin_app_raiser.js)
   -v, --verbose           Enable debug logging
 ```
 
@@ -138,10 +196,11 @@ qdbus6 org.kde.KWin /KWin org.kde.KWin.queryWindowInfo
 ## Project structure
 
 ```
-kwanata.py           # Python DBus service (main entry point)
-kwin_script.js       # KWin script (dynamically injected at runtime)
-config.toml          # App-matching rules
-kwanata.service      # systemd user unit file
+kwanata.py                  # Python DBus service (main entry point)
+kwin_window_notifier.js     # KWin script: forwards focus/caption events over DBus
+kwin_app_raiser.js          # KWin script template: raises/cycles windows for run-or-raise
+config.toml                 # App-matching and run-or-raise rules
+kwanata.service             # systemd user unit file
 ```
 
 ## License

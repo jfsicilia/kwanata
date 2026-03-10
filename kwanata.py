@@ -3,7 +3,7 @@
 DBus service that bridges KWin window focus events to Kanata.
 
 Receives window info (pid, name, class, caption) from the KWin script
-(kwin_script.js, dynamically injected at runtime) via DBus, matches it
+(kwin_window_notifier.js, dynamically injected at runtime) via DBus, matches it
 against rules in config.toml, and sends layer/virtual-key commands to
 Kanata over a persistent TCP connection.
 """
@@ -38,7 +38,12 @@ DBUS_PATH = "/com/pyroflexia/KWanata"
 
 # Default path to the KWin script for dynamic injection.
 DEFAULT_KWIN_SCRIPT = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "kwin_script.js"
+    os.path.dirname(os.path.abspath(__file__)), "kwin_window_notifier.js"
+)
+
+# Default path to the KWin raise script template.
+DEFAULT_KWIN_RAISE_SCRIPT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "kwin_app_raiser.js"
 )
 
 # The dbus message that will be received has several lines with the format:
@@ -68,88 +73,6 @@ KANATA_MESSAGE_PUSH = "MessagePush"
 
 # Config section for run-or-raise entries.
 SECTION_RUN_OR_RAISE = "run_or_raise"
-
-# KWin script template for raising a window by resourceClass.
-# __CLASS__ is replaced at runtime with the target resourceClass.
-# Handles single match (raise it) and multiple matches (cycle by list order).
-KWIN_RAISE_SCRIPT_TEMPLATE = (
-    f"""\
-// This code was copied from ww raise or run project (apache 2.0 licensed). Many
-// thanks to contributors.
-const KWANATA_SERVICE = "{DBUS_SERVICE}";
-const KWANATA_PATH = "{DBUS_PATH}";
-const KWANATA_INTERFACE = "{DBUS_INTERFACE}";
-"""
-    + """\
-function kwinActivateClient(clientClass, clientCaption) {
-    // Little hack to be KDE5 and KDE6 compatible.
-    let clients = workspace.clientList ? workspace.clientList() : workspace.windowList();
-    let activeWindow = workspace.activeClient || workspace.activeWindow;
-
-    // Compile regular expressions.
-    let clientClassRE = new RegExp(clientClass || '', 'i');
-    let clientCaptionRE = new RegExp(clientCaption || '', 'i');
-    let matchingClients = [];
-    for (var i = 0; i < clients.length; i++) {
-        let client = clients[i];
-        if (clientClassRE.exec(client.resourceClass) && clientCaptionRE.exec(client.caption)) {
-            matchingClients.push(client);
-        }
-    }
-    if (matchingClients.length === 0) {
-        sendRaiseResult(false, clientClass, clientCaption);
-        return;
-    }
-
-    if (matchingClients.length === 1) {
-        if (activeWindow !== matchingClients[0]) {
-            setActiveClient(matchingClients[0]);
-        }
-        sendRaiseResult(true, clientClass, clientCaption);
-        return;
-    }
-
-    // Check if the active window is one of the matching windows
-    let activeIsMatching = false;
-    for (var j = 0; j < matchingClients.length; j++) {
-        if (activeWindow === matchingClients[j]) {
-            activeIsMatching = true;
-            break;
-        }
-    }
-    // Always sort by stacking order
-    matchingClients.sort(function (a, b) {
-        return a.stackingOrder - b.stackingOrder;
-    });
-    // Activate new window.
-    if (activeIsMatching) {
-        // We're already in this app - cycle through windows (pick first)
-        const client = matchingClients[0];
-        setActiveClient(client);
-    } else {
-        // We're switching from another app - pick most recently active (last)
-        const client = matchingClients[matchingClients.length - 1];
-        setActiveClient(client);
-    }
-    sendRaiseResult(true, clientClass, clientCaption);
-}
-
-function setActiveClient(client) {
-    if (workspace.activeClient !== undefined) {
-        workspace.activeClient = client;
-    } else {
-        workspace.activeWindow = client;
-    }
-}
-
-function sendRaiseResult(success, clientClass, clientCaption) {
-    let msg = "class: " + clientClass + "\\ncaption: " + clientCaption + "\\nsuccess: " + success;
-    callDBus(KWANATA_SERVICE, KWANATA_PATH, KWANATA_INTERFACE, "notifyRaiseResult", msg);
-}
-
-kwinActivateClient('__CLASS__', '__CAPTION__');
-"""
-)
 
 log = logging.getLogger()
 
@@ -328,12 +251,28 @@ class AppRunner:
     # Timeout in seconds waiting for the raise result from KWin.
     RAISE_TIMEOUT = 0.5
 
-    def __init__(self, bus, config_filepath):
+    def __init__(self, bus, config_filepath, raise_script_path):
         self._bus = bus
         self._entries = {}
         self._raise_event = threading.Event()
         self._raise_success = False
+        self._raise_template = self._load_raise_template(raise_script_path)
         self.load_config(config_filepath)
+
+    def _load_raise_template(self, filepath):
+        """Load the KWin raise script template and resolve DBus constants."""
+        abs_path = os.path.abspath(filepath)
+        try:
+            with open(abs_path, "r", encoding="utf-8") as f:
+                template = f.read()
+            template = template.replace("__DBUS_SERVICE__", DBUS_SERVICE)
+            template = template.replace("__DBUS_PATH__", DBUS_PATH)
+            template = template.replace("__DBUS_INTERFACE__", DBUS_INTERFACE)
+            log.info("Loaded raise script template from %s", abs_path)
+            return template
+        except Exception as e:
+            log.warning("Failed to load raise script template %s: %s", abs_path, e)
+            return None
 
     def load_config(self, filepath):
         self._entries = {}
@@ -402,7 +341,10 @@ class AppRunner:
 
     def _raise_window(self, app_class="", app_caption=""):
         """Inject a KWin script to raise a window. Returns True if raised."""
-        script_content = KWIN_RAISE_SCRIPT_TEMPLATE.replace("__CLASS__", app_class)
+        if not self._raise_template:
+            log.warning("No raise script template loaded, cannot raise window")
+            return False
+        script_content = self._raise_template.replace("__CLASS__", app_class)
         script_content = script_content.replace("__CAPTION__", app_caption)
         self._raise_event.clear()
         self._raise_success = False
@@ -828,6 +770,11 @@ def main():
         help=f"Path to KWin JS file to inject (default: {DEFAULT_KWIN_SCRIPT})",
     )
     parser.add_argument(
+        "--kwin-raise-script",
+        default=DEFAULT_KWIN_RAISE_SCRIPT,
+        help=f"Path to KWin raise JS template (default: {DEFAULT_KWIN_RAISE_SCRIPT})",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -846,7 +793,7 @@ def main():
 
     kanata = KanataClient(utils.validate_port(f"{args.host}:{args.port}"))
 
-    app_runner = AppRunner(bus, args.config)
+    app_runner = AppRunner(bus, args.config, args.kwin_raise_script)
     kanata.set_app_callback(app_runner.run_or_raise)
 
     def reload_config():

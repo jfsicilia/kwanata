@@ -33,8 +33,9 @@ else
 fi
 
 # 4. Deploy KWin Dynamic Script
-cp kwin_script.js "$STATE_DIR/"
-echo "✅ KWin script template placed in $STATE_DIR"
+cp kwin_window_notifier.js "$STATE_DIR/"
+cp kwin_app_raiser.js "$STATE_DIR/"
+echo "✅ KWin scripts placed in $STATE_DIR"
 
 # 5. Install Systemd User Service
 cp kwanata.service "$SERVICE_DIR/"

@@ -34,10 +34,14 @@ else
     echo "⚠️  Warning: config.toml not found. Create it to avoid errors."
 fi
 
-# 4. Link KWin Script Template
-if [ -f "$PROJECT_ROOT/kwin_script.js" ]; then
-    ln -sf "$PROJECT_ROOT/kwin_script.js" "$STATE_DIR/kwin_script.js"
-    echo "✅ Symlink created: $STATE_DIR/kwin_script.js"
+# 4. Link KWin Scripts
+if [ -f "$PROJECT_ROOT/kwin_window_notifier.js" ]; then
+    ln -sf "$PROJECT_ROOT/kwin_window_notifier.js" "$STATE_DIR/kwin_window_notifier.js"
+    echo "✅ Symlink created: $STATE_DIR/kwin_window_notifier.js"
+fi
+if [ -f "$PROJECT_ROOT/kwin_app_raiser.js" ]; then
+    ln -sf "$PROJECT_ROOT/kwin_app_raiser.js" "$STATE_DIR/kwin_app_raiser.js"
+    echo "✅ Symlink created: $STATE_DIR/kwin_app_raiser.js"
 fi
 
 # 5. Setup Systemd Service with absolute path
