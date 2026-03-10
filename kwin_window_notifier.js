@@ -7,9 +7,9 @@
 
 // Must match the DBus interface published by kwanata.py for the
 // injected service.
-const SERVICE = "com.pyroflexia.KWanata";
-const PATH = "/com/pyroflexia/KWanata";
-const INTERFACE = "com.pyroflexia.KWanata";
+const KWANATA_SERVICE = "com.pyroflexia.KWanata";
+const KWANATA_PATH = "/com/pyroflexia/KWanata";
+const KWANATA_INTERFACE = "com.pyroflexia.KWanata";
 
 const DEBUG_METHOD = "debug"
 const FOCUS_EVENT_METHOD = "notifyFocusChanged";
@@ -23,7 +23,7 @@ let windowActivated = workspace.windowActivated ?? workspace.clientActivated;
 //   method -- Method for the callDBus call.
 //   msg -- Message to send.
 function sendDBusMsg(method, msg) {
-    callDBus(SERVICE, PATH, INTERFACE, method, msg);
+    callDBus(KWANATA_SERVICE, KWANATA_PATH, KWANATA_INTERFACE, method, msg);
 }
 
 // Sends a message to the DBus with the DEBUG_METHOD

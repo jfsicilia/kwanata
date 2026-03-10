@@ -2,12 +2,13 @@
 // Injected as a temporary script by kwanata.py each time a run-or-raise action
 // is triggered. Sends the result back to the KWanata DBus service.
 //
-// This code was copied from ww raise or run project (apache 2.0 licensed). Many
-// thanks to contributors.
-
-const KWANATA_SERVICE = "__DBUS_SERVICE__";
-const KWANATA_PATH = "__DBUS_PATH__";
-const KWANATA_INTERFACE = "__DBUS_INTERFACE__";
+// __<NAME>__ are placeholders that will be replaced by kwanata.py
+//
+// This code was copied and modified from ww raise or run project (apache 2.0 
+// licensed). Many thanks to contributors.
+const KWANATA_SERVICE = "com.pyroflexia.KWanata";
+const KWANATA_PATH = "/com/pyroflexia/KWanata";
+const KWANATA_INTERFACE = "com.pyroflexia.KWanata";
 
 function kwinActivateClient(clientClass, clientCaption) {
     // Little hack to be KDE5 and KDE6 compatible.

@@ -265,9 +265,6 @@ class AppRunner:
         try:
             with open(abs_path, "r", encoding="utf-8") as f:
                 template = f.read()
-            template = template.replace("__DBUS_SERVICE__", DBUS_SERVICE)
-            template = template.replace("__DBUS_PATH__", DBUS_PATH)
-            template = template.replace("__DBUS_INTERFACE__", DBUS_INTERFACE)
             log.info("Loaded raise script template from %s", abs_path)
             return template
         except Exception as e:
