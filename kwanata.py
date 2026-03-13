@@ -507,6 +507,15 @@ class KanataClient:
             if self._on_app_callback:
                 self._on_app_callback(app_name)
             return
+        if message.startswith("NOTIFY:"):
+            text = message[len("NOTIFY:"):].strip()
+            log.info("KanataNotify: %s", text)
+            subprocess.Popen(
+                ["notify-send", "KWanata", text],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return
         if message.startswith("RELOAD:"):
             log.info("Kanata requested config reload")
             if self._on_reload_callback:
