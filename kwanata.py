@@ -285,7 +285,7 @@ class AppRunner:
                     "class": entry.get("class", ""),
                     "caption": entry.get("caption", ""),
                     "command": entry.get("command", name),
-                    "process": entry.get("process", entry.get("command", name)),
+                    # "process": entry.get("process", entry.get("command", name)),
                 }
             if self._entries:
                 log.info("Loaded %d run_or_raise entries", len(self._entries))
@@ -508,7 +508,7 @@ class KanataClient:
                 self._on_app_callback(app_name)
             return
         if message.startswith("NOTIFY:"):
-            text = message[len("NOTIFY:"):].strip()
+            text = message[len("NOTIFY:") :].strip()
             log.info("KanataNotify: %s", text)
             subprocess.Popen(
                 ["notify-send", "KWanata", text],

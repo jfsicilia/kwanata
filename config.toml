@@ -24,6 +24,11 @@
 
 [[app]]
 name = "chrome"
+caption = "@Colab"
+virtual_keys = ["vk_colab"]
+
+[[app]]
+name = "chrome"
 virtual_keys = ["vk_chrome"]
 
 [[app]]
@@ -69,8 +74,13 @@ name = "dolphin"
 virtual_keys = ["vk_dolphin"]
 
 [[app]]
-caption = "(All Files|Save File — Skanpage)"
+caption = "(All Files|Save File — Skanpage|Select files)"
 virtual_keys = ["vk_dolphin"]
+
+[[app]]
+name = "zapzap"
+virtual_keys = ["vk_zapzap"]
+
 
 # *************** KWANATA - Run Or Raise configuration ******************
 
@@ -83,10 +93,8 @@ virtual_keys = ["vk_dolphin"]
 #            search if the app is running.
 # command -- Command to launch the app (if omitted, name will be used as 
 #            command). It the app is not running command will run.
-# process -- Name of the process to check if the app is running (if omitted,
-#            command will be uses as process). It is a regex.
 #
-# Defaults: class="", caption="", command=name, process=command.
+# Defaults: class="", caption="", command=name.
 # NOTE: At least caption or class should be defined to reach and app.
 
 # Chrome app - Mgmt window (It will find a window with an active tab with @Mgmt in its title).
@@ -95,7 +103,6 @@ name = "chromeMgmt"
 class = "google-chrome"
 caption = "@Mgmt"
 command = "google-chrome-stable --window-name='@Mgmt'"
-process = "chrome"
 
 # Chrome app - Cloud window (It will find a window with an active tab with @Cloud in its title).
 [[run_or_raise]]
@@ -103,7 +110,6 @@ name = "chromeCloud"
 class = "google-chrome"
 caption = "@Cloud"
 command = "google-chrome-stable --window-name='@Cloud'"
-process = "chrome"
 
 # Chrome app - AI window (It will find a window with an active tab with @AI in its title).
 [[run_or_raise]]
@@ -111,7 +117,6 @@ name = "chromeAI"
 class = "google-chrome"
 caption = "@AI"
 command = "google-chrome-stable --window-name='@AI'"
-process = "chrome"
 
 # Chrome app - Banks window (It will find a window with an active tab with @Banks in its title).
 [[run_or_raise]]
@@ -119,30 +124,31 @@ name = "chromeBanks"
 class = "google-chrome"
 caption = "@Banks"
 command = "google-chrome-stable --window-name='@Banks'"
-process = "chrome"
 
 # Chrome app - Misc window (It will find a window with an active tab with no @Cloud|@Banks|@AI|@Mgmt in its title).
 [[run_or_raise]]
 name = "chromeMisc"
 class = "google-chrome"
-# caption = "^((?!(@Banks|@AI|@Cloud|@Mgmt)).)*$"
 caption = "@Misc"
 command = "google-chrome-stable --window-name='@Misc'"
-process = "chrome"
+
+[[run_or_raise]]
+name = "chromeColab"
+class = "google-chrome"
+caption = "@Colab"
+command = "google-chrome-stable --window-name='@Colab'"
 
 # Chrome app - When raised multiple times it will iterate through opened chrome windows.
 [[run_or_raise]]
 name = "chrome"
 class = "google-chrome"
 command = "google-chrome-stable"
-process = "chrome"
 
 # Obsidian app - When raised multiple times it will iterate through opened obsidians.
 [[run_or_raise]]
 name = "obsidian"
 class = "obsidian"
 command = "flatpak run --branch=stable --arch=x86_64 --command=obsidian.sh --file-forwarding md.obsidian.Obsidian @@u %U @@"
-process = "obsidian"
 
 # Terminal app (foot) - When raised multiple times it will iterate through opened terminal windows.
 [[run_or_raise]]
@@ -150,7 +156,6 @@ name = "terminal"
 class = "foot"
 # Don't want to iterate through terminal windows where nvim or claude code is running.
 caption = "^((?!(nvim|claude code)).)*$"
-command = "foot"
 
 # Nvim app - When raised multiple times it will iterate through opened nvims.
 [[run_or_raise]]
@@ -158,7 +163,6 @@ name = "nvim"
 # It will find Nvim running inside foot or Konsole (checking for the signature in its title) or as a stand alone app.
 caption = "(Nvim|nvim — Konsole)$"
 command = "nvim"
-process = "nvim$"
 
 # Claude Code app - When raised multiple times it will iterate through opened claude code apps.
 [[run_or_raise]]
@@ -166,19 +170,25 @@ name = "claude_code"
 # Claude Code will run inside of a terminal. It will check the signature in it's title.
 caption = "Claude Code$"
 command = "foot"
-process = "foot"
 
 # File Explorer app (dolphin) - When raised multiple times it will iterate through opened file explorers.
 [[run_or_raise]]
 name = "fileexplorer"
 class = "org.kde.dolphin"
 command = "dolphin"
-process = "dolphin$"
 
 # KeePassXC app - When raised multiple times it will iterate through opened file explorers.
-[[run_or_raise]]
 [[run_or_raise]]
 name = "keepassxc"
 class = "org.keepassxc.KeePassXC"
 command = "keepassxc"
-process = "keepassxc$"
+
+[[run_or_raise]]
+name = "zapzap"
+class = "zapzap"
+command = "zapzap"
+
+[[run_or_raise]]
+name = "telegram"
+class = "org.telegram"
+command = "telegram"
