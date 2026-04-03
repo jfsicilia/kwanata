@@ -25,7 +25,7 @@
 [[app]]
 name = "chrome"
 caption = "@Colab"
-virtual_keys = ["vk_colab"]
+virtual_keys = ["vk_colab", "vk_chrome"]
 
 [[app]]
 name = "chrome"
@@ -34,6 +34,10 @@ virtual_keys = ["vk_chrome"]
 [[app]]
 name = "obsidian"
 virtual_keys = ["vk_obsidian"]
+
+[[app]]
+name = "soffice.bin"
+virtual_keys = ["vk_okular"]
 
 [[app]]
 name = "foot"
@@ -76,6 +80,10 @@ virtual_keys = ["vk_dolphin"]
 [[app]]
 caption = "(All Files|Save File — Skanpage|Select files)"
 virtual_keys = ["vk_dolphin"]
+
+[[app]]
+class = "libreoffice-calc"
+virtual_keys = ["vk_calc"]
 
 [[app]]
 name = "zapzap"
@@ -148,7 +156,19 @@ command = "google-chrome-stable"
 [[run_or_raise]]
 name = "obsidian"
 class = "obsidian"
-command = "flatpak run --branch=stable --arch=x86_64 --command=obsidian.sh --file-forwarding md.obsidian.Obsidian @@u %U @@"
+command = "~/.local/bin/appimages/obsidian.AppImage --no-sandbox"
+
+# Okular app - When raised multiple times it will iterate through opened okular.
+[[run_or_raise]]
+name = "okular"
+class = "okular|org.kde.okular"
+command = "okular"
+
+# Libreoffice Calc app - When raised multiple times it will iterate through opened Calc.
+[[run_or_raise]]
+name = "calc"
+class = "libreoffice-calc"
+command = "libreoffice"
 
 # Terminal app (foot) - When raised multiple times it will iterate through opened terminal windows.
 [[run_or_raise]]
