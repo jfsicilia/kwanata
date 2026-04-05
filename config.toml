@@ -212,3 +212,11 @@ command = "zapzap"
 name = "telegram"
 class = "org.telegram"
 command = "telegram"
+
+[[run_or_raise]]
+name = "fusion360"
+caption = "Autodesk Fusion"
+
+[[run_or_raise]]
+name = "sketchup"
+caption = "SketchUp for Web"
