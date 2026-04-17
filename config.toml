@@ -32,6 +32,15 @@ name = "chrome"
 virtual_keys = ["vk_chrome"]
 
 [[app]]
+name = "firefox"
+class = "firefoxColab"
+virtual_keys = ["vk_colab", "vk_firefox"]
+
+[[app]]
+name = "firefox"
+virtual_keys = ["vk_firefox"]
+
+[[app]]
 name = "obsidian"
 virtual_keys = ["vk_obsidian"]
 
@@ -86,7 +95,7 @@ class = "libreoffice-calc"
 virtual_keys = ["vk_calc"]
 
 [[app]]
-name = "zapzap"
+class = "com.rtosta.zapzap"
 virtual_keys = ["vk_zapzap"]
 
 
@@ -105,52 +114,115 @@ virtual_keys = ["vk_zapzap"]
 # Defaults: class="", caption="", command=name.
 # NOTE: At least caption or class should be defined to reach and app.
 
-# Chrome app - Mgmt window (It will find a window with an active tab with @Mgmt in its title).
+# Chrome app - Mgmt window 
 [[run_or_raise]]
 name = "chromeMgmt"
 class = "google-chrome"
-caption = "@Mgmt"
-command = "google-chrome-stable --window-name='@Mgmt'"
+caption = "chromeMgmt"
+command = "google-chrome-stable --new-window --window-name='chromeMgmt' https://mail.google.com https://contacts.google.com https://calendar.google.com"
 
-# Chrome app - Cloud window (It will find a window with an active tab with @Cloud in its title).
+# Chrome app - Cloud window 
 [[run_or_raise]]
 name = "chromeCloud"
 class = "google-chrome"
-caption = "@Cloud"
-command = "google-chrome-stable --window-name='@Cloud'"
+caption = "chromeCloud"
+command = "google-chrome-stable --new-window --window-name='chromeCloud' https://guacimara.synology.me:8981/ https://medano.synology.me:8981/ https://perseo:8384/ https://guacimara:8384/"
 
-# Chrome app - AI window (It will find a window with an active tab with @AI in its title).
+# Chrome app - AI window 
 [[run_or_raise]]
 name = "chromeAI"
 class = "google-chrome"
-caption = "@AI"
-command = "google-chrome-stable --window-name='@AI'"
+caption = "chromeAI"
+command = "google-chrome-stable --new-window --window-name='chromeAI' https://chatgpt.com/ https://gemini.google.com/ https://claude.ai/ https://notebooklm.google.com/"
 
-# Chrome app - Banks window (It will find a window with an active tab with @Banks in its title).
+# Chrome app - Banks window 
 [[run_or_raise]]
 name = "chromeBanks"
 class = "google-chrome"
-caption = "@Banks"
-command = "google-chrome-stable --window-name='@Banks'"
+caption = "chromeBanks"
+command = "google-chrome-stable --new-window --window-name='chromeBanks' https://particulares.bancosantander.es/oneweb/ https://bancaonline.bankinter.com/gestion/login.xhtml https://www.caixabank.es/particular/home/particulares_es.html https://www.arquia.com/es-es/ https://www.revolut.com/"
 
-# Chrome app - Misc window (It will find a window with an active tab with no @Cloud|@Banks|@AI|@Mgmt in its title).
+# Chrome app - Misc window 
 [[run_or_raise]]
-name = "chromeMisc"
+name = "chromeMisc1"
 class = "google-chrome"
-caption = "@Misc"
-command = "google-chrome-stable --window-name='@Misc'"
+caption = "chromeMisc1"
+command = "google-chrome-stable --new-window --window-name='chromeMisc1'"
+
+# Chrome app - Misc window 
+[[run_or_raise]]
+name = "chromeMisc2"
+class = "google-chrome"
+caption = "chromeMisc2"
+command = "google-chrome-stable --new-window --window-name='chromeMisc2'"
+
+# Chrome app - Misc window 
+[[run_or_raise]]
+name = "chromeMisc3"
+class = "google-chrome"
+caption = "chromeMisc3"
+command = "google-chrome-stable --new-window --window-name='chromeMisc3'"
+
+# Chrome app - Misc window 
+[[run_or_raise]]
+name = "chromeMisc4"
+class = "google-chrome"
+caption = "chromeMisc4"
+command = "google-chrome-stable --new-window --window-name='chromeMisc4'"
 
 [[run_or_raise]]
 name = "chromeColab"
 class = "google-chrome"
-caption = "@Colab"
-command = "google-chrome-stable --window-name='@Colab'"
+caption = "chromeColab"
+command = "google-chrome-stable --new-window --window-name='chromeColab' https://colab.research.google.com/"
 
 # Chrome app - When raised multiple times it will iterate through opened chrome windows.
 [[run_or_raise]]
 name = "chrome"
 class = "google-chrome"
 command = "google-chrome-stable"
+
+# Firefox app - When raised multiple times it will iterate through opened chrome windows.
+[[run_or_raise]]
+name = "firefoxMgmt"
+class = "firefoxMgmt"
+command = "firefox -P mgmt --no-remote --name='firefoxMgmt' https://mail.google.com https://contacts.google.com https://calendar.google.com"
+
+# Firefox app - When raised multiple times it will iterate through opened chrome windows.
+[[run_or_raise]]
+name = "firefoxCloud"
+class = "firefoxCloud"
+command = "firefox -P cloud --no-remote --name='firefoxCloud' https://192.168.1.10:8981/ https://perseo:8384/ https://guacimara:8384/"
+
+# Firefox app - When raised multiple times it will iterate through opened chrome windows.
+[[run_or_raise]]
+name = "firefoxAI"
+class = "firefoxAI"
+command = "firefox -P AI --no-remote --name='firefoxAI' https://chatgpt.com/ https://gemini.google.com/ https://claude.ai/ https://notebooklm.google.com/"
+
+# Firefox app - When raised multiple times it will iterate through opened chrome windows.
+[[run_or_raise]]
+name = "firefoxBanks"
+class = "firefoxBanks"
+command = "firefox -P banks --no-remote --name='firefoxBanks' https://particulares.bancosantander.es/oneweb/ https://bancaonline.bankinter.com/gestion/login.xhtml https://www.caixabank.es/particular/home/particulares_es.html https://www.arquia.com/es-es/ https://www.revolut.com/"
+
+# Firefox app - When raised multiple times it will iterate through opened chrome windows.
+[[run_or_raise]]
+name = "firefoxMisc"
+class = "firefoxMisc"
+command = "firefox -P misc --no-remote --name='firefoxMisc'"
+
+# Firefox app - When raised multiple times it will iterate through opened chrome windows.
+[[run_or_raise]]
+name = "firefoxColab"
+class = "firefoxColab"
+command = "firefox -P colab --no-remote --name='firefoxColab' https://colab.research.google.com/"
+
+# Firefox app - When raised multiple times it will iterate through opened chrome windows.
+[[run_or_raise]]
+name = "firefox"
+class = "firefox"
+command = "firefox -P default-release --no-remote --name='firefox'"
 
 # Obsidian app - When raised multiple times it will iterate through opened obsidians.
 [[run_or_raise]]
@@ -216,7 +288,19 @@ command = "telegram"
 [[run_or_raise]]
 name = "fusion360"
 caption = "Autodesk Fusion"
+command = "env 'WINEPREFIX=/home/juan/.autodesk_fusion/wineprefixes/default' wine 'C:\\\\ProgramData\\\\Microsoft\\\\Windows\\\\Start Menu\\\\Programs\\\\Autodesk\\\\Autodesk Fusion.lnk'"
 
 [[run_or_raise]]
 name = "sketchup"
 caption = "SketchUp for Web"
+command = "/opt/google/chrome/google-chrome --profile-directory=Default --app-id=beodkchghmjjfhojholjdhdfodleinln"
+
+[[run_or_raise]]
+name = "orcaslicer"
+class = "OrcaSlicer"
+command = "/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=entrypoint --file-forwarding com.orcaslicer.OrcaSlicer"
+
+[[run_or_raise]]
+name = "onlyoffice"
+class = "ONLYOFFICE"
+command = "/usr/bin/flatpak run --branch=stable --arch=x86_64 --command=desktopeditors --file-forwarding org.onlyoffice.desktopeditors"
