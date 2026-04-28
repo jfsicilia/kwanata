@@ -99,6 +99,11 @@ class = "com.rtosta.zapzap"
 virtual_keys = ["vk_zapzap"]
 
 
+[[app]]
+class = "kiwix"
+virtual_keys = ["vk_kiwix"]
+
+
 # *************** KWANATA - Run Or Raise configuration ******************
 
 # Run-or-raise: triggered by Kanata push-msg "APP: <name>"
