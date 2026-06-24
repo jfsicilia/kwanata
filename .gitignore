@@ -7,3 +7,4 @@ __pycache__/
 .nvim/
 .vscode/
 .session.vim
+run.sh
