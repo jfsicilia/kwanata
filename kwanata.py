@@ -46,6 +46,14 @@ DEFAULT_KWIN_RAISE_SCRIPT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "kwin_app_raiser.js"
 )
 
+# Default path to the help popup window script.
+DEFAULT_HELP_WINDOW_SCRIPT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "kwanata_help_window.py"
+)
+
+# Directory containing help markdown files, named <app>_<keys>.md
+DEFAULT_HELP_FILES_DIR = os.path.expanduser("~/.config/kanata/help")
+
 # The dbus message that will be received has several lines with the format:
 #    field1: value
 #    field2: value
@@ -389,6 +397,94 @@ class AppRunner:
 
 
 # ----------------------------
+# HelpWindowManager
+# ----------------------------
+class HelpWindowManager:
+    """Manages the help popup window subprocess.
+
+    Timer logic
+    -----------
+    OPEN_HELP received, no window open:
+      - no timer running  → start 1 s timer
+      - timer running     → keep timer (it will re-evaluate the path when it fires)
+    OPEN_HELP received, window already open:
+      → kill old subprocess, resolve path now, spawn new one immediately
+    CLOSE_HELP received:
+      → cancel pending timer (if any) and kill subprocess (if any)
+
+    Path resolution is deferred to timer-fire time so that the LayerChange
+    event that Kanata sends right after OPEN_HELP has already been processed.
+    """
+
+    OPEN_DELAY = 1.0
+
+    def __init__(self, script_path: str, file_path_provider):
+        self._script_path = script_path
+        self._file_path_provider = file_path_provider
+        self._proc: Optional[subprocess.Popen] = None
+        self._timer: Optional[threading.Timer] = None
+        self._lock = threading.Lock()
+
+    def open(self) -> None:
+        with self._lock:
+            if self._proc is not None and self._proc.poll() is None:
+                # Window already visible → resolve path now and replace
+                file_path = self._file_path_provider()
+                if file_path is None:
+                    log.warning(
+                        "Cannot determine help file path (no app or layer info)"
+                    )
+                    return
+                self._kill_proc()
+                self._spawn(file_path)
+            elif self._timer is None:
+                # Nothing open, no timer → start delay; path resolved at fire time
+                self._timer = threading.Timer(self.OPEN_DELAY, self._on_timer)
+                self._timer.daemon = True
+                self._timer.start()
+            # else: timer already running → let it fire and resolve then
+
+    def close(self) -> None:
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+            self._kill_proc()
+
+    def _on_timer(self) -> None:
+        with self._lock:
+            self._timer = None
+            file_path = self._file_path_provider()
+            if file_path is None:
+                log.warning("Cannot determine help file path (no app or layer info)")
+                return
+            self._spawn(file_path)
+
+    def _spawn(self, file_path: str) -> None:
+        self._kill_proc()
+        if not os.path.isfile(self._script_path):
+            log.warning("Help window script not found: %s", self._script_path)
+            return
+        if not os.path.isfile(file_path):
+            log.warning("Help file not found: %s", file_path)
+            return
+        self._proc = subprocess.Popen(
+            [sys.executable, self._script_path, file_path],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        log.info("Help window opened: %s (pid=%d)", file_path, self._proc.pid)
+
+    def _kill_proc(self) -> None:
+        if self._proc is not None:
+            if self._proc.poll() is None:
+                self._proc.terminate()
+                log.info("Help window closed (pid=%d)", self._proc.pid)
+            self._proc = None
+
+
+# ----------------------------
 # KanataClient
 # ----------------------------
 class KanataClient:
@@ -403,6 +499,9 @@ class KanataClient:
         self._send_lock = threading.Lock()
         self._on_app_callback = None
         self._on_reload_callback = None
+        self._on_help_open_callback = None
+        self._on_help_close_callback = None
+        self.current_layer: Optional[str] = None
 
     def set_app_callback(self, callback):
         """Set callback for APP: push messages. Called with app name as argument."""
@@ -411,6 +510,14 @@ class KanataClient:
     def set_reload_callback(self, callback):
         """Set callback for RELOAD: push messages. Called with no arguments."""
         self._on_reload_callback = callback
+
+    def set_help_open_callback(self, callback):
+        """Set callback for OPEN_HELP push messages. Called with no arguments."""
+        self._on_help_open_callback = callback
+
+    def set_help_close_callback(self, callback):
+        """Set callback for CLOSE_HELP push messages. Called with no arguments."""
+        self._on_help_close_callback = callback
 
     def _connect(self):
         """Connect to Kanata's TCP server. Lazy-called on first send()."""
@@ -490,6 +597,10 @@ class KanataClient:
         if KANATA_MESSAGE_PUSH in data:
             self._on_message_push(data[KANATA_MESSAGE_PUSH].get("message", [""])[0])
             return
+        if "LayerChange" in data:
+            new_layer = data["LayerChange"].get("new")
+            if new_layer:
+                self.current_layer = new_layer
         # Ignore some kanta messages to avoid cluttering.
         if any(msg in data for msg in KANATA_IGNORED_MESSAGES):
             return
@@ -520,6 +631,16 @@ class KanataClient:
             log.info("Kanata requested config reload")
             if self._on_reload_callback:
                 self._on_reload_callback()
+            return
+        if message == "OPEN_HELP" or message.startswith("OPEN_HELP:"):
+            log.info("KanataHelp open")
+            if self._on_help_open_callback:
+                self._on_help_open_callback()
+            return
+        if message == "CLOSE_HELP" or message.startswith("CLOSE_HELP:"):
+            log.info("KanataHelp close")
+            if self._on_help_close_callback:
+                self._on_help_close_callback()
             return
 
         log.info("KanataMsg: %s", message)
@@ -690,6 +811,36 @@ class KWanataService:
         """Set the AppRunner instance to receive raise results."""
         self._app_runner = app_runner
 
+    def get_help_file_path(self, help_dir: str) -> Optional[str]:
+        """Derive the help file path from the current active app and Kanata layer.
+
+        Extracts <app> from the first vk_<app> virtual key and <keys> from
+        the current Kanata layer name (supports both layer_<keys> and
+        <keys>_layer naming conventions), then returns:
+          <help_dir>/<app>_<keys>.md
+        """
+        app = None
+        for vk in self._last_virtual_keys or []:
+            if vk.startswith("vk_"):
+                app = vk[len("vk_") :]
+                break
+
+        layer = self._kanata_client.current_layer
+        keys = None
+        if layer:
+            if layer.startswith("layer_"):
+                keys = layer[len("layer_") :]
+            elif layer.endswith("_layer"):
+                keys = layer[: -len("_layer")]
+            else:
+                keys = layer
+
+        if not app or not keys:
+            log.warning("Cannot derive help file: app=%s layer=%s", app, layer)
+            return None
+
+        return os.path.join(help_dir, f"{app}_{keys}.hlp")
+
     def _notifyKanata(self, dbus_msg):
         """Match the window info against rules and update Kanata state.
 
@@ -811,6 +962,13 @@ def main():
 
     service = KWanataService(kanata, app_matcher, args.default_layer)
     service.set_app_runner(app_runner)
+
+    help_mgr = HelpWindowManager(
+        DEFAULT_HELP_WINDOW_SCRIPT,
+        lambda: service.get_help_file_path(DEFAULT_HELP_FILES_DIR),
+    )
+    kanata.set_help_open_callback(help_mgr.open)
+    kanata.set_help_close_callback(help_mgr.close)
 
     # Publish DBus service (will listen to events from the dynamically injected
     # KWin script).
