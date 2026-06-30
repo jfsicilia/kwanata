@@ -816,8 +816,10 @@ class KWanataService:
 
         Extracts <app> from the first vk_<app> virtual key and <keys> from
         the current Kanata layer name (supports both layer_<keys> and
-        <keys>_layer naming conventions), then returns:
-          <help_dir>/<app>_<keys>.md
+        <keys>_layer naming conventions), then tries in order:
+          <help_dir>/<app>/<app>_<keys>.hlp
+          <help_dir>/global_<keys>.hlp
+        Returns the first path that exists, or None if neither is found.
         """
         app = None
         for vk in self._last_virtual_keys or []:
@@ -839,7 +841,17 @@ class KWanataService:
             log.warning("Cannot derive help file: app=%s layer=%s", app, layer)
             return None
 
-        return os.path.join(help_dir, f"{app}_{keys}.hlp")
+        app_path = os.path.join(help_dir, app, f"{app}_{keys}.hlp")
+        log.debug("Trying to find file: %s", app_path)
+        if os.path.isfile(app_path):
+            return app_path
+
+        global_path = os.path.join(help_dir, f"global_{keys}.hlp")
+        log.debug("Trying to find file: %s", global_path)
+        if os.path.isfile(global_path):
+            return global_path
+
+        return None
 
     def _notifyKanata(self, dbus_msg):
         """Match the window info against rules and update Kanata state.
