@@ -821,14 +821,16 @@ class KWanataService:
           <help_dir>/global_<keys>.hlp
         Returns the first path that exists, or None if neither is found.
         """
-        app = None
+
+        # Read de app in focus (if none defaults to global)
+        app = "global"  # Default to global.
         for vk in self._last_virtual_keys or []:
             if vk.startswith("vk_"):
                 app = vk[len("vk_") :]
                 break
 
         layer = self._kanata_client.current_layer
-        keys = None
+        keys: Optional[str] = None
         if layer:
             if layer.startswith("layer_"):
                 keys = layer[len("layer_") :]
@@ -837,20 +839,30 @@ class KWanataService:
             else:
                 keys = layer
 
-        if not app or not keys:
-            log.warning("Cannot derive help file: app=%s layer=%s", app, layer)
+        if not keys:
+            log.warning(
+                "Cannot derive help file: app=%s layer=%s keys=%s", app, layer, keys
+            )
             return None
 
-        app_path = os.path.join(help_dir, app, f"{app}_{keys}.hlp")
+        keys = keys.replace("\\", "bslash")
+        keys = keys.replace("/", "slash")
+        log.info("keys: %s", keys)
+
+        # App specific help file.
+        if app != "global":
+            app_path = os.path.join(help_dir, app, f"{app}_{keys}.hlp")
+            log.debug("Trying to find file: %s", app_path)
+            if os.path.isfile(app_path):
+                return app_path
+
+        # Global help file.
+        app_path = os.path.join(help_dir, f"global_{keys}.hlp")
         log.debug("Trying to find file: %s", app_path)
         if os.path.isfile(app_path):
             return app_path
 
-        global_path = os.path.join(help_dir, f"global_{keys}.hlp")
-        log.debug("Trying to find file: %s", global_path)
-        if os.path.isfile(global_path):
-            return global_path
-
+        log.warning("Cannot derive help file: app_path=%s", app_path)
         return None
 
     def _notifyKanata(self, dbus_msg):
