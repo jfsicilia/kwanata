@@ -14,10 +14,12 @@ mkdir -p "$BIN_DIR" "$LIB_DIR" "$CONFIG_DIR" "$STATE_DIR" "$SERVICE_DIR"
 
 # 2. Deploy Python Daemon
 if [ -f "kwanata.py" ]; then
-    cp kwanata.py "$LIB_DIR/"
-    chmod +x "$LIB_DIR/kwanata.py"
+    cp kwanata.py kwanata_help_window.py "$LIB_DIR/"
+    chmod +x "$LIB_DIR/kwanata.py" "$LIB_DIR/kwanata_help_window.py"
     # Create symlink for easy CLI access
     ln -sf "$LIB_DIR/kwanata.py" "$BIN_DIR/kwanata"
+    ln -sf "$LIB_DIR/kwanata_help_window.py" "$BIN_DIR/kwanata_help_window"
+    ln -sf "$LIB_DIR/kwanata_help_window.py" "$BIN_DIR/kwanata_help_window.py"
     echo "✅ Daemon installed to $LIB_DIR"
 else
     echo "❌ Error: kwanata.py not found!"
