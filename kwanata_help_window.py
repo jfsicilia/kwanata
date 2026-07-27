@@ -35,23 +35,24 @@ from gi.repository import Gdk, GLib, Gtk, GtkLayerShell
 
 # ── Catppuccin Mocha palette ──────────────────────────────────────────────────
 
-_MOCHA_BASE     = "#1e1e2e"
+_MOCHA_BASE = "#1e1e2e"
 _MOCHA_SURFACE0 = "#313244"
-_MOCHA_TEXT     = "#cdd6f4"
-_MOCHA_BLUE     = "#89b4fa"   # H1
-_MOCHA_MAUVE    = "#cba6f7"   # H2
-_MOCHA_TEAL     = "#94e2d5"   # H3
-_MOCHA_GREEN    = "#a6e3a1"   # inline code fg
-_MOCHA_LAVENDER = "#c203fc"   # border
-_MOCHA_OVERLAY0 = "#6c7086"   # HR / subtext
+_MOCHA_TEXT = "#cdd6f4"
+_MOCHA_BLUE = "#89b4fa"  # H1
+_MOCHA_MAUVE = "#cba6f7"  # H2
+_MOCHA_TEAL = "#94e2d5"  # H3
+_MOCHA_GREEN = "#a6e3a1"  # inline code fg
+_MOCHA_LAVENDER = "#c203fc"  # border
+_MOCHA_OVERLAY0 = "#6c7086"  # HR / subtext
 
 _HEADER_STYLE = {
-    1: (_MOCHA_BLUE,  "x-large"),
-    2: (_MOCHA_MAUVE, "large"),
-    3: (_MOCHA_TEAL,  "medium"),
+    1: (_MOCHA_BLUE, "large"),
+    2: (_MOCHA_MAUVE, "medium"),
+    3: (_MOCHA_TEAL, "small"),
 }
 
 # ── Markdown → Pango markup ───────────────────────────────────────────────────
+
 
 def _esc(s: str) -> str:
     return GLib.markup_escape_text(s)
@@ -60,7 +61,7 @@ def _esc(s: str) -> str:
 def _inline(escaped: str) -> str:
     """Apply inline Markdown to an already Pango-escaped string."""
     escaped = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped)
-    escaped = re.sub(r"__(.+?)__",     r"<b>\1</b>", escaped)
+    escaped = re.sub(r"__(.+?)__", r"<b>\1</b>", escaped)
     escaped = re.sub(r"\*([^*\n]+?)\*", r"<i>\1</i>", escaped)
     escaped = re.sub(
         r"`([^`\n]+?)`",
@@ -69,6 +70,46 @@ def _inline(escaped: str) -> str:
         escaped,
     )
     return escaped
+
+
+def _split_trailing_parens(raw: str) -> tuple[str, str] | None:
+    """Split off a trailing, possibly nested, "(...)" group. Returns
+    (main, paren) or None if the line doesn't end with a balanced group."""
+    line = raw.rstrip()
+    if not line.endswith(")"):
+        return None
+    depth = 0
+    i = len(line) - 1
+    while i >= 0:
+        if line[i] == ")":
+            depth += 1
+        elif line[i] == "(":
+            depth -= 1
+            if depth == 0:
+                break
+        i -= 1
+    if depth != 0 or i <= 0 or not line[i - 1].isspace():
+        return None
+    main = line[:i].rstrip()
+    if not main:
+        return None
+    return main, line[i:]
+
+
+def _line_with_dim_trailing_parens(raw: str) -> str:
+    """Render a line, shrinking a trailing "(...)" group (e.g. the launched
+    commands in "combo -- description (commands)") since it's secondary info.
+    """
+    split = _split_trailing_parens(raw)
+    if split is None:
+        return _inline(_esc(raw))
+    main, paren = split
+    return (
+        _inline(_esc(main))
+        + f' <span size="small" foreground="{_MOCHA_OVERLAY0}">'
+        + _inline(_esc(paren))
+        + "</span>"
+    )
 
 
 def markdown_to_pango(text: str) -> str:
@@ -96,21 +137,22 @@ def markdown_to_pango(text: str) -> str:
         lm = re.match(r"^(\s*)[-*]\s(.*)", raw)
         if lm:
             indent, rest = lm.groups()
-            out.append(indent + "• " + _inline(_esc(rest)))
+            out.append(indent + "• " + _line_with_dim_trailing_parens(rest))
             continue
 
-        out.append(_inline(_esc(raw)))
+        out.append(_line_with_dim_trailing_parens(raw))
 
     return "\n".join(out)
+
 
 # ── Size estimation ───────────────────────────────────────────────────────────
 
 # Empirical metrics for 10pt monospace at 96 DPI.
-_CHAR_W = 8    # pixels per character
-_LINE_H = 20   # pixels per line (font + leading)
-_H_PAD  = 26   # top + bottom margin + border (10+10+3+3)
-_W_PAD  = 30   # left + right margin + border (12+12+3+3)
-_MIN_W  = 300
+_CHAR_W = 8  # pixels per character
+_LINE_H = 20  # pixels per line (font + leading)
+_H_PAD = 26  # top + bottom margin + border (10+10+3+3)
+_W_PAD = 30  # left + right margin + border (12+12+3+3)
+_MIN_W = 300
 
 
 def _content_size(content: str, sw: int, sh: int) -> tuple[int, int]:
@@ -118,6 +160,7 @@ def _content_size(content: str, sw: int, sh: int) -> tuple[int, int]:
     text_h = len(lines) * _LINE_H + _H_PAD
     text_w = max(len(l) for l in lines) * _CHAR_W + _W_PAD
     return max(_MIN_W, min(text_w, sw - 120)), min(text_h, sh - 120)
+
 
 # ── Window ────────────────────────────────────────────────────────────────────
 
