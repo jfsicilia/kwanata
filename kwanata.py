@@ -86,6 +86,51 @@ log = logging.getLogger()
 
 
 # ----------------------------
+# Variables
+# ----------------------------
+class Variables:
+    """Boolean, client-settable variables (see SET:/UNSET: push messages).
+
+    All known variables are booleans, default to False, and can only be
+    named from the KNOWN set below — unknown names are ignored (logged).
+    """
+
+    KNOWN = {"verbose"}
+
+    def __init__(self):
+        self._values = {name: False for name in self.KNOWN}
+
+    def get(self, name: str) -> bool:
+        return self._values.get(name, False)
+
+    def set(self, name: str, value: bool) -> None:
+        if name not in self.KNOWN:
+            log.warning("Unknown variable '%s', ignoring", name)
+            return
+        self._values[name] = value
+        log.info("Variable '%s' = %s", name, value)
+
+    def toggle(self, name: str) -> None:
+        self.set(name, not self.get(name))
+
+    def apply_set(self, raw_name: str) -> None:
+        """Handle a "SET:<name>" message body (name may be "!name" to toggle)."""
+        raw_name = raw_name.strip()
+        if raw_name.startswith("!"):
+            self.toggle(raw_name[1:].strip())
+        else:
+            self.set(raw_name, True)
+
+    def apply_unset(self, raw_name: str) -> None:
+        """Handle an "UNSET:<name>" message body (name may be "!name" to toggle)."""
+        raw_name = raw_name.strip()
+        if raw_name.startswith("!"):
+            self.toggle(raw_name[1:].strip())
+        else:
+            self.set(raw_name, False)
+
+
+# ----------------------------
 # utils
 # ----------------------------
 class utils:
@@ -418,9 +463,10 @@ class HelpWindowManager:
 
     OPEN_DELAY = 1.0
 
-    def __init__(self, script_path: str, file_path_provider):
+    def __init__(self, script_path: str, file_path_provider, verbose_provider=None):
         self._script_path = script_path
         self._file_path_provider = file_path_provider
+        self._verbose_provider = verbose_provider or (lambda: False)
         self._proc: Optional[subprocess.Popen] = None
         self._timer: Optional[threading.Timer] = None
         self._lock = threading.Lock()
@@ -468,8 +514,11 @@ class HelpWindowManager:
         if not os.path.isfile(file_path):
             log.warning("Help file not found: %s", file_path)
             return
+        argv = [sys.executable, self._script_path, file_path]
+        if self._verbose_provider():
+            argv.append("--verbose")
         self._proc = subprocess.Popen(
-            [sys.executable, self._script_path, file_path],
+            argv,
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -501,6 +550,8 @@ class KanataClient:
         self._on_reload_callback = None
         self._on_help_open_callback = None
         self._on_help_close_callback = None
+        self._on_set_callback = None
+        self._on_unset_callback = None
         self.current_layer: Optional[str] = None
 
     def set_app_callback(self, callback):
@@ -518,6 +569,16 @@ class KanataClient:
     def set_help_close_callback(self, callback):
         """Set callback for CLOSE_HELP push messages. Called with no arguments."""
         self._on_help_close_callback = callback
+
+    def set_set_callback(self, callback):
+        """Set callback for SET: push messages. Called with the raw name
+        (e.g. "verbose" or "!verbose")."""
+        self._on_set_callback = callback
+
+    def set_unset_callback(self, callback):
+        """Set callback for UNSET: push messages. Called with the raw name
+        (e.g. "verbose" or "!verbose")."""
+        self._on_unset_callback = callback
 
     def _connect(self):
         """Connect to Kanata's TCP server. Lazy-called on first send()."""
@@ -641,6 +702,18 @@ class KanataClient:
             log.info("KanataHelp close")
             if self._on_help_close_callback:
                 self._on_help_close_callback()
+            return
+        if message.startswith("SET:"):
+            name = message[len("SET:") :].strip()
+            log.info("KanataSet: %s", name)
+            if self._on_set_callback:
+                self._on_set_callback(name)
+            return
+        if message.startswith("UNSET:"):
+            name = message[len("UNSET:") :].strip()
+            log.info("KanataUnset: %s", name)
+            if self._on_unset_callback:
+                self._on_unset_callback(name)
             return
 
         log.info("KanataMsg: %s", message)
@@ -969,6 +1042,7 @@ def main():
     log.setLevel(log_level)
 
     app_matcher = AppMatcher(args.config)
+    variables = Variables()
 
     bus = SessionBus()
 
@@ -983,6 +1057,8 @@ def main():
         app_runner.load_config(args.config)
 
     kanata.set_reload_callback(reload_config)
+    kanata.set_set_callback(variables.apply_set)
+    kanata.set_unset_callback(variables.apply_unset)
 
     service = KWanataService(kanata, app_matcher, args.default_layer)
     service.set_app_runner(app_runner)
@@ -990,6 +1066,7 @@ def main():
     help_mgr = HelpWindowManager(
         DEFAULT_HELP_WINDOW_SCRIPT,
         lambda: service.get_help_file_path(DEFAULT_HELP_FILES_DIR),
+        lambda: variables.get("verbose"),
     )
     kanata.set_help_open_callback(help_mgr.open)
     kanata.set_help_close_callback(help_mgr.close)
