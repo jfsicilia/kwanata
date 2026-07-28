@@ -15,11 +15,15 @@ Renders the file with basic Markdown support:
   **bold**  *italic*  `inline code`
   - list items    ---  horizontal rule
 
+A trailing "(...)" group on a line (e.g. the launched commands in
+"combo -- description (commands)") is treated as secondary detail: shown
+small and dimmed with --verbose, hidden otherwise.
+
 Requires gtk-layer-shell:
   Arch / CachyOS:  sudo pacman -S gtk-layer-shell
 
 Usage (standalone test):
-  python3 kwanata_help_window.py <filepath>
+  python3 kwanata_help_window.py <filepath> [--verbose]
 """
 
 import re
@@ -50,6 +54,12 @@ _HEADER_STYLE = {
     2: (_MOCHA_MAUVE, "medium"),
     3: (_MOCHA_TEAL, "small"),
 }
+
+_HR_LINE = "─────────────────────────────────"
+
+# Pango's relative <span size="..."> factors, used to weight width estimates
+# for text rendered at a non-default size (headers, dimmed details).
+_PANGO_SIZE_FACTOR = {"small": 0.8333, "medium": 1.0, "large": 1.2}
 
 # ── Markdown → Pango markup ───────────────────────────────────────────────────
 
@@ -96,14 +106,18 @@ def _split_trailing_parens(raw: str) -> tuple[str, str] | None:
     return main, line[i:]
 
 
-def _line_with_dim_trailing_parens(raw: str) -> str:
-    """Render a line, shrinking a trailing "(...)" group (e.g. the launched
-    commands in "combo -- description (commands)") since it's secondary info.
+def _line_with_dim_trailing_parens(raw: str, show_details: bool) -> str:
+    """Render a line, handling a trailing "(...)" group (e.g. the launched
+    commands in "combo -- description (commands)") since it's secondary info:
+    shown in a smaller, dimmer font when show_details is True, hidden
+    entirely otherwise.
     """
     split = _split_trailing_parens(raw)
     if split is None:
         return _inline(_esc(raw))
     main, paren = split
+    if not show_details:
+        return _inline(_esc(main))
     return (
         _inline(_esc(main))
         + f' <span size="small" foreground="{_MOCHA_OVERLAY0}">'
@@ -112,7 +126,7 @@ def _line_with_dim_trailing_parens(raw: str) -> str:
     )
 
 
-def markdown_to_pango(text: str) -> str:
+def markdown_to_pango(text: str, show_details: bool = False) -> str:
     out = []
     for raw in text.splitlines():
         m = re.match(r"^(#{1,3})\s+(.*)", raw)
@@ -128,19 +142,16 @@ def markdown_to_pango(text: str) -> str:
             continue
 
         if re.match(r"^[-*_]{3,}\s*$", raw):
-            out.append(
-                f'<span foreground="{_MOCHA_OVERLAY0}">'
-                "─────────────────────────────────</span>"
-            )
+            out.append(f'<span foreground="{_MOCHA_OVERLAY0}">{_HR_LINE}</span>')
             continue
 
         lm = re.match(r"^(\s*)[-*]\s(.*)", raw)
         if lm:
             indent, rest = lm.groups()
-            out.append(indent + "• " + _line_with_dim_trailing_parens(rest))
+            out.append(indent + "• " + _line_with_dim_trailing_parens(rest, show_details))
             continue
 
-        out.append(_line_with_dim_trailing_parens(raw))
+        out.append(_line_with_dim_trailing_parens(raw, show_details))
 
     return "\n".join(out)
 
@@ -155,10 +166,50 @@ _W_PAD = 30  # left + right margin + border (12+12+3+3)
 _MIN_W = 300
 
 
-def _content_size(content: str, sw: int, sh: int) -> tuple[int, int]:
+def _strip_inline_markup(s: str) -> str:
+    """Strip Markdown inline markers, keeping their content, so width
+    estimation reflects rendered text rather than the Markdown source."""
+    s = re.sub(r"\*\*(.+?)\*\*", r"\1", s)
+    s = re.sub(r"__(.+?)__", r"\1", s)
+    s = re.sub(r"\*([^*\n]+?)\*", r"\1", s)
+    s = re.sub(r"`([^`\n]+?)`", r" \1 ", s)  # inline code renders with padding spaces
+    return s
+
+
+def _line_width_units(raw: str, show_details: bool) -> float:
+    """Estimate a line's rendered width in base-font character units,
+    accounting for header sizing and whether trailing "(...)" details
+    (hidden unless show_details) are shown."""
+    m = re.match(r"^(#{1,3})\s+(.*)", raw)
+    if m:
+        level = len(m.group(1))
+        _, size = _HEADER_STYLE[level]
+        body = _strip_inline_markup(m.group(2).rstrip())
+        return len(body) * _PANGO_SIZE_FACTOR[size]
+
+    if re.match(r"^[-*_]{3,}\s*$", raw):
+        return len(_HR_LINE)
+
+    lm = re.match(r"^(\s*)[-*]\s(.*)", raw)
+    if lm:
+        indent, rest = lm.groups()
+        raw = indent + "• " + rest
+
+    split = _split_trailing_parens(raw)
+    if split is None:
+        return len(_strip_inline_markup(raw))
+    main, paren = split
+    width = len(_strip_inline_markup(main))
+    if show_details:
+        width += 1 + len(_strip_inline_markup(paren)) * _PANGO_SIZE_FACTOR["small"]
+    return width
+
+
+def _content_size(content: str, sw: int, sh: int, show_details: bool = False) -> tuple[int, int]:
     lines = content.splitlines() or [""]
     text_h = len(lines) * _LINE_H + _H_PAD
-    text_w = max(len(l) for l in lines) * _CHAR_W + _W_PAD
+    max_width_units = max(_line_width_units(l, show_details) for l in lines)
+    text_w = int(max_width_units * _CHAR_W) + _W_PAD
     return max(_MIN_W, min(text_w, sw - 120)), min(text_h, sh - 120)
 
 
@@ -195,16 +246,16 @@ def _screen_size() -> tuple[int, int]:
     return 1920, 1080
 
 
-def show_help(filepath: str) -> None:
+def show_help(filepath: str, show_details: bool = False) -> None:
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
     except OSError as e:
         sys.exit(f"Cannot read {filepath}: {e}")
 
-    pango_text = markdown_to_pango(content)
+    pango_text = markdown_to_pango(content, show_details)
     sw, sh = _screen_size()
-    win_w, win_h = _content_size(content, sw, sh)
+    win_w, win_h = _content_size(content, sw, sh, show_details)
 
     provider = Gtk.CssProvider()
     provider.load_from_data(CSS)
@@ -258,5 +309,5 @@ def show_help(filepath: str) -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        sys.exit(f"Usage: {sys.argv[0]} <filepath>")
-    show_help(sys.argv[1])
+        sys.exit(f"Usage: {sys.argv[0]} <filepath> [--verbose]")
+    show_help(sys.argv[1], show_details="--verbose" in sys.argv[2:])
