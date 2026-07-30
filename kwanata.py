@@ -52,7 +52,7 @@ DEFAULT_HELP_WINDOW_SCRIPT = os.path.join(
 )
 
 # Directory containing help markdown files, named <app>_<keys>.md
-DEFAULT_HELP_FILES_DIR = os.path.expanduser("~/.config/kanata/help")
+DEFAULT_HELP_FILES_DIR = os.path.expanduser("~/.local/share/kwanata/help")
 
 # The dbus message that will be received has several lines with the format:
 #    field1: value
