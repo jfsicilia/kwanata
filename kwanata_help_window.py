@@ -34,8 +34,9 @@ import gi
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
+gi.require_version("Pango", "1.0")
 gi.require_version("GtkLayerShell", "0.1")
-from gi.repository import Gdk, GLib, Gtk, GtkLayerShell
+from gi.repository import Gdk, GLib, Gtk, GtkLayerShell, Pango
 
 # ── Catppuccin Mocha palette ──────────────────────────────────────────────────
 
@@ -68,17 +69,56 @@ def _esc(s: str) -> str:
     return GLib.markup_escape_text(s)
 
 
+_BACKTICK_PLACEHOLDER = ""  # Private-Use-Area sentinel; never occurs in real text
+_TAG_SPAN_RE = re.compile(r"<(b|i)>.*?</\1>")
+
+
+def _protect_crossing_code_spans(escaped: str) -> str:
+    """Neutralize backtick pairs that straddle an already-substituted <b>/<i>
+    tag (one delimiter inside, its partner outside).
+
+    Such a pair makes the later `` `code` `` substitution wrap a closing
+    </b>/</i> tag inside a new <span>, producing improperly nested Pango
+    markup. Since the whole help file is inserted with a single
+    insert_markup() call, one such line silently blanks the entire window
+    instead of just that line. Literal stray backticks (e.g. describing a
+    "`" keybinding) are common in these files, so treat non-nesting pairs
+    as plain characters instead of a code span.
+    """
+    tag_spans = [m.span() for m in _TAG_SPAN_RE.finditer(escaped)]
+
+    def _container(pos):
+        for start, end in tag_spans:
+            if start < pos < end:
+                return (start, end)
+        return None
+
+    positions = [i for i, ch in enumerate(escaped) if ch == "`"]
+    if len(positions) < 2:
+        return escaped
+
+    chars = list(escaped)
+    for i in range(0, len(positions) - 1, 2):
+        a, b = positions[i], positions[i + 1]
+        if _container(a) != _container(b):
+            chars[a] = _BACKTICK_PLACEHOLDER
+            chars[b] = _BACKTICK_PLACEHOLDER
+    return "".join(chars)
+
+
 def _inline(escaped: str) -> str:
     """Apply inline Markdown to an already Pango-escaped string."""
     escaped = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped)
     escaped = re.sub(r"__(.+?)__", r"<b>\1</b>", escaped)
     escaped = re.sub(r"\*([^*\n]+?)\*", r"<i>\1</i>", escaped)
+    escaped = _protect_crossing_code_spans(escaped)
     escaped = re.sub(
         r"`([^`\n]+?)`",
         rf'<span font_family="monospace" foreground="{_MOCHA_GREEN}"'
         rf' background="{_MOCHA_SURFACE0}"> \1 </span>',
         escaped,
     )
+    escaped = escaped.replace(_BACKTICK_PLACEHOLDER, "`")
     return escaped
 
 
@@ -254,6 +294,18 @@ def show_help(filepath: str, show_details: bool = False) -> None:
         sys.exit(f"Cannot read {filepath}: {e}")
 
     pango_text = markdown_to_pango(content, show_details)
+    try:
+        Pango.parse_markup(pango_text, -1, "\x00")
+    except GLib.Error as e:
+        # insert_markup() itself only logs a g_warning and silently leaves
+        # the buffer empty on invalid markup, so validate up front and fall
+        # back to the raw (unformatted) text rather than show a blank window.
+        sys.stderr.write(
+            f"kwanata_help_window: invalid markup in {filepath}, "
+            f"falling back to plain text: {e}\n"
+        )
+        pango_text = GLib.markup_escape_text(content)
+
     sw, sh = _screen_size()
     win_w, win_h = _content_size(content, sw, sh, show_details)
 
