@@ -447,18 +447,24 @@ class AppRunner:
 class HelpWindowManager:
     """Manages the help popup window subprocess.
 
-    Timer logic
+    State logic
     -----------
-    OPEN_HELP received, no window open:
-      - no timer running  → start 1 s timer
-      - timer running     → keep timer (it will re-evaluate the path when it fires)
-    OPEN_HELP received, window already open:
-      → kill old subprocess, resolve path now, spawn new one immediately
-    CLOSE_HELP received:
-      → cancel pending timer (if any) and kill subprocess (if any)
+    Kanata sends OPEN_HELP at the same time as a LayerChange push message
+    when the help key also switches layers, so resolving the help path
+    immediately on OPEN_HELP can race the LayerChange and show the previous
+    layer's help.
 
-    Path resolution is deferred to timer-fire time so that the LayerChange
-    event that Kanata sends right after OPEN_HELP has already been processed.
+    OPEN_HELP received, not already active:
+      → become active, start 1 s timer. Path is resolved (using whatever
+        layer is current at that point) only when the timer fires, giving
+        the LayerChange event time to be processed first.
+    OPEN_HELP received, already active:
+      → ignored.
+    Layer change detected, while active and the initial timer already fired:
+      → re-resolve and refresh the window for the new layer.
+    CLOSE_HELP received:
+      → become inactive, cancel any pending timer, kill subprocess (if any).
+        A later OPEN_HELP starts the whole process again from scratch.
     """
 
     OPEN_DELAY = 1.0
@@ -469,29 +475,30 @@ class HelpWindowManager:
         self._verbose_provider = verbose_provider or (lambda: False)
         self._proc: Optional[subprocess.Popen] = None
         self._timer: Optional[threading.Timer] = None
+        self._active = False
         self._lock = threading.Lock()
 
     def open(self) -> None:
         with self._lock:
-            if self._proc is not None and self._proc.poll() is None:
-                # Window already visible → resolve path now and replace
-                file_path = self._file_path_provider()
-                if file_path is None:
-                    log.warning(
-                        "Cannot determine help file path (no app or layer info)"
-                    )
-                    return
-                self._kill_proc()
-                self._spawn(file_path)
-            elif self._timer is None:
-                # Nothing open, no timer → start delay; path resolved at fire time
-                self._timer = threading.Timer(self.OPEN_DELAY, self._on_timer)
-                self._timer.daemon = True
-                self._timer.start()
-            # else: timer already running → let it fire and resolve then
+            if self._active:
+                # Already pending/open → ignore repeated OPEN_HELP.
+                return
+            self._active = True
+            self._timer = threading.Timer(self.OPEN_DELAY, self._on_timer)
+            self._timer.daemon = True
+            self._timer.start()
+
+    def on_layer_change(self) -> None:
+        with self._lock:
+            if not self._active or self._timer is not None:
+                # Not open yet, or still waiting for the initial timer
+                # (which will pick up the current layer when it fires).
+                return
+            self._show_current_locked()
 
     def close(self) -> None:
         with self._lock:
+            self._active = False
             if self._timer is not None:
                 self._timer.cancel()
                 self._timer = None
@@ -500,11 +507,17 @@ class HelpWindowManager:
     def _on_timer(self) -> None:
         with self._lock:
             self._timer = None
-            file_path = self._file_path_provider()
-            if file_path is None:
-                log.warning("Cannot determine help file path (no app or layer info)")
+            if not self._active:
+                # Closed before the timer fired.
                 return
-            self._spawn(file_path)
+            self._show_current_locked()
+
+    def _show_current_locked(self) -> None:
+        file_path = self._file_path_provider()
+        if file_path is None:
+            log.warning("Cannot determine help file path (no app or layer info)")
+            return
+        self._spawn(file_path)
 
     def _spawn(self, file_path: str) -> None:
         self._kill_proc()
@@ -552,6 +565,7 @@ class KanataClient:
         self._on_help_close_callback = None
         self._on_set_callback = None
         self._on_unset_callback = None
+        self._on_layer_change_callback = None
         self.current_layer: Optional[str] = None
 
     def set_app_callback(self, callback):
@@ -569,6 +583,11 @@ class KanataClient:
     def set_help_close_callback(self, callback):
         """Set callback for CLOSE_HELP push messages. Called with no arguments."""
         self._on_help_close_callback = callback
+
+    def set_layer_change_callback(self, callback):
+        """Set callback for LayerChange messages. Called with no arguments
+        after self.current_layer has already been updated."""
+        self._on_layer_change_callback = callback
 
     def set_set_callback(self, callback):
         """Set callback for SET: push messages. Called with the raw name
@@ -662,6 +681,8 @@ class KanataClient:
             new_layer = data["LayerChange"].get("new")
             if new_layer:
                 self.current_layer = new_layer
+                if self._on_layer_change_callback:
+                    self._on_layer_change_callback()
         # Ignore some kanta messages to avoid cluttering.
         if any(msg in data for msg in KANATA_IGNORED_MESSAGES):
             return
@@ -1070,6 +1091,7 @@ def main():
     )
     kanata.set_help_open_callback(help_mgr.open)
     kanata.set_help_close_callback(help_mgr.close)
+    kanata.set_layer_change_callback(help_mgr.on_layer_change)
 
     # Publish DBus service (will listen to events from the dynamically injected
     # KWin script).
