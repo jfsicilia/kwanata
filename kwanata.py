@@ -78,6 +78,7 @@ KANATA_VIRTUAL_KEY_ACTIONS = {"Press", "Release", "Tap", "Toggle"}
 
 KANATA_IGNORED_MESSAGES = ["TapActivated", "HoldActivated"]
 KANATA_MESSAGE_PUSH = "MessagePush"
+KANATA_LAYER_CHANGE = "LayerChange"
 
 # Config section for run-or-raise entries.
 SECTION_RUN_OR_RAISE = "run_or_raise"
@@ -478,10 +479,20 @@ class HelpWindowManager:
         self._active = False
         self._lock = threading.Lock()
 
-    def open(self) -> None:
+    def open(self, keys: Optional[str] = None) -> None:
         with self._lock:
+            if keys is not None:
+                # Keys given explicitly (OPEN_HELP:<keys>) → no race with a
+                # LayerChange to wait out, and no dedup against an already
+                # open window: always (re)show immediately for these keys.
+                if self._timer is not None:
+                    self._timer.cancel()
+                    self._timer = None
+                self._active = True
+                self._show_current_locked(keys)
+                return
             if self._active:
-                # Already pending/open → ignore repeated OPEN_HELP.
+                # Already pending/open → ignore repeated plain OPEN_HELP.
                 return
             self._active = True
             self._timer = threading.Timer(self.OPEN_DELAY, self._on_timer)
@@ -512,8 +523,8 @@ class HelpWindowManager:
                 return
             self._show_current_locked()
 
-    def _show_current_locked(self) -> None:
-        file_path = self._file_path_provider()
+    def _show_current_locked(self, keys: Optional[str] = None) -> None:
+        file_path = self._file_path_provider(keys)
         if file_path is None:
             log.warning("Cannot determine help file path (no app or layer info)")
             return
@@ -577,7 +588,9 @@ class KanataClient:
         self._on_reload_callback = callback
 
     def set_help_open_callback(self, callback):
-        """Set callback for OPEN_HELP push messages. Called with no arguments."""
+        """Set callback for OPEN_HELP push messages. Called with an optional
+        keys argument (str from "OPEN_HELP:<keys>", or None for plain
+        "OPEN_HELP")."""
         self._on_help_open_callback = callback
 
     def set_help_close_callback(self, callback):
@@ -677,8 +690,8 @@ class KanataClient:
         if KANATA_MESSAGE_PUSH in data:
             self._on_message_push(data[KANATA_MESSAGE_PUSH].get("message", [""])[0])
             return
-        if "LayerChange" in data:
-            new_layer = data["LayerChange"].get("new")
+        if KANATA_LAYER_CHANGE in data:
+            new_layer = data[KANATA_LAYER_CHANGE].get("new")
             if new_layer:
                 self.current_layer = new_layer
                 if self._on_layer_change_callback:
@@ -715,9 +728,14 @@ class KanataClient:
                 self._on_reload_callback()
             return
         if message == "OPEN_HELP" or message.startswith("OPEN_HELP:"):
-            log.info("KanataHelp open")
+            keys = (
+                message[len("OPEN_HELP:") :].strip()
+                if message.startswith("OPEN_HELP:")
+                else None
+            )
+            log.info("KanataHelp open keys=%s", keys)
             if self._on_help_open_callback:
-                self._on_help_open_callback()
+                self._on_help_open_callback(keys)
             return
         if message == "CLOSE_HELP" or message.startswith("CLOSE_HELP:"):
             log.info("KanataHelp close")
@@ -905,12 +923,16 @@ class KWanataService:
         """Set the AppRunner instance to receive raise results."""
         self._app_runner = app_runner
 
-    def get_help_file_path(self, help_dir: str) -> Optional[str]:
-        """Derive the help file path from the current active app and Kanata layer.
+    def get_help_file_path(
+        self, help_dir: str, keys: Optional[str] = None
+    ) -> Optional[str]:
+        """Derive the help file path from the current active app and either
+        the given keys or the current Kanata layer.
 
-        Extracts <app> from the first vk_<app> virtual key and <keys> from
-        the current Kanata layer name (supports both layer_<keys> and
-        <keys>_layer naming conventions), then tries in order:
+        Extracts <app> from the first vk_<app> virtual key. If keys is not
+        given, it is derived from the current Kanata layer name (supports
+        both layer_<keys> and <keys>_layer naming conventions). Then tries
+        in order:
           <help_dir>/<app>/<app>_<keys>.hlp
           <help_dir>/global_<keys>.hlp
         Returns the first path that exists, or None if neither is found.
@@ -923,20 +945,18 @@ class KWanataService:
                 app = vk[len("vk_") :]
                 break
 
-        layer = self._kanata_client.current_layer
-        keys: Optional[str] = None
-        if layer:
-            if layer.startswith("layer_"):
-                keys = layer[len("layer_") :]
-            elif layer.endswith("_layer"):
-                keys = layer[: -len("_layer")]
-            else:
-                keys = layer
+        if keys is None:
+            layer = self._kanata_client.current_layer
+            if layer:
+                if layer.startswith("layer_"):
+                    keys = layer[len("layer_") :]
+                elif layer.endswith("_layer"):
+                    keys = layer[: -len("_layer")]
+                else:
+                    keys = layer
 
         if not keys:
-            log.warning(
-                "Cannot derive help file: app=%s layer=%s keys=%s", app, layer, keys
-            )
+            log.warning("Cannot derive help file: app=%s keys=%s", app, keys)
             return None
 
         keys = keys.replace("\\", "bslash")
@@ -1086,7 +1106,7 @@ def main():
 
     help_mgr = HelpWindowManager(
         DEFAULT_HELP_WINDOW_SCRIPT,
-        lambda: service.get_help_file_path(DEFAULT_HELP_FILES_DIR),
+        lambda keys=None: service.get_help_file_path(DEFAULT_HELP_FILES_DIR, keys),
         lambda: variables.get("verbose"),
     )
     kanata.set_help_open_callback(help_mgr.open)
