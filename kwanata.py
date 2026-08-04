@@ -92,14 +92,20 @@ log = logging.getLogger()
 class Variables:
     """Boolean, client-settable variables (see SET:/UNSET: push messages).
 
-    All known variables are booleans, default to False, and can only be
-    named from the KNOWN set below — unknown names are ignored (logged).
+    All known variables are booleans and can only be named from the
+    DEFAULTS mapping below (which also supplies each variable's initial
+    value) — unknown names are ignored (logged).
     """
 
-    KNOWN = {"verbose"}
+    DEFAULTS = {
+        "verbose": False,
+        # Gates POPUP_HELP only; OPEN_HELP:<keys> always works regardless.
+        "popup_help": True,
+    }
+    KNOWN = set(DEFAULTS)
 
     def __init__(self):
-        self._values = {name: False for name in self.KNOWN}
+        self._values = dict(self.DEFAULTS)
 
     def get(self, name: str) -> bool:
         return self._values.get(name, False)
@@ -450,51 +456,89 @@ class HelpWindowManager:
 
     State logic
     -----------
-    Kanata sends OPEN_HELP at the same time as a LayerChange push message
+    Kanata sends POPUP_HELP at the same time as a LayerChange push message
     when the help key also switches layers, so resolving the help path
-    immediately on OPEN_HELP can race the LayerChange and show the previous
-    layer's help.
+    immediately on POPUP_HELP can race the LayerChange and show the previous
+    layer's help. OPEN_HELP:<keys> carries its own explicit keys, so it never
+    races a LayerChange and is shown immediately, bypassing the debounce
+    timer below.
 
-    OPEN_HELP received, not already active:
+    POPUP_HELP is gated by the "popup_help" boolean variable (see Variables,
+    default True). The gate is re-checked on every refresh of a
+    POPUP_HELP-originated session (the initial debounce timer firing, and
+    each later layer change) — not just on the initial POPUP_HELP message —
+    so disabling it mid-session closes an already-open popup instead of
+    waiting for the next layer with a missing help file. OPEN_HELP:<keys>
+    sessions are never gated by it and always work, including their own
+    later layer-change refreshes.
+
+    There is no explicit "close" message. Instead, closing is a side effect
+    of failing to resolve a help file: whenever an open is attempted (via
+    POPUP_HELP, OPEN_HELP:<keys>, or a layer change while active) and no
+    file exists for the resulting app/layer/keys, the window (if any) is
+    closed and tracking becomes inactive. This is a terminal state: a later
+    layer landing on a layer that *does* have a help file will NOT reopen it
+    automatically — only a fresh POPUP_HELP/OPEN_HELP:<keys> does.
+
+    POPUP_HELP received, not already active:
       → become active, start 1 s timer. Path is resolved (using whatever
         layer is current at that point) only when the timer fires, giving
         the LayerChange event time to be processed first.
-    OPEN_HELP received, already active:
+    POPUP_HELP received, already active:
       → ignored.
     Layer change detected, while active and the initial timer already fired:
       → re-resolve and refresh the window for the new layer.
-    CLOSE_HELP received:
+    Resolution fails (no matching help file for the current app/layer/keys):
       → become inactive, cancel any pending timer, kill subprocess (if any).
-        A later OPEN_HELP starts the whole process again from scratch.
+        A later POPUP_HELP/OPEN_HELP:<keys> starts the whole process again
+        from scratch.
     """
 
     OPEN_DELAY = 1.0
 
-    def __init__(self, script_path: str, file_path_provider, verbose_provider=None):
+    def __init__(
+        self,
+        script_path: str,
+        file_path_provider,
+        verbose_provider=None,
+        popup_enabled_provider=None,
+    ):
         self._script_path = script_path
         self._file_path_provider = file_path_provider
         self._verbose_provider = verbose_provider or (lambda: False)
+        self._popup_enabled_provider = popup_enabled_provider or (lambda: True)
         self._proc: Optional[subprocess.Popen] = None
+        self._current_file: Optional[str] = None
         self._timer: Optional[threading.Timer] = None
         self._active = False
+        # Whether the current/pending active session was started by a plain
+        # POPUP_HELP (True, so it must keep honoring popup_help on every
+        # later refresh) or by an explicit OPEN_HELP:<keys> (False, immune).
+        self._popup_gated = False
         self._lock = threading.Lock()
 
     def open(self, keys: Optional[str] = None) -> None:
         with self._lock:
             if keys is not None:
                 # Keys given explicitly (OPEN_HELP:<keys>) → no race with a
-                # LayerChange to wait out, and no dedup against an already
-                # open window: always (re)show immediately for these keys.
+                # LayerChange to wait out, no dedup against an already open
+                # window, and not gated by popup_help: always (re)show
+                # immediately for these keys.
                 if self._timer is not None:
                     self._timer.cancel()
                     self._timer = None
                 self._active = True
+                self._popup_gated = False
                 self._show_current_locked(keys)
                 return
+            if not self._popup_enabled_provider():
+                # POPUP_HELP disabled via the popup_help variable.
+                return
             if self._active:
-                # Already pending/open → ignore repeated plain OPEN_HELP.
+                # Already pending/open → ignore repeated POPUP_HELP.
                 return
             self._active = True
+            self._popup_gated = True
             self._timer = threading.Timer(self.OPEN_DELAY, self._on_timer)
             self._timer.daemon = True
             self._timer.start()
@@ -505,15 +549,27 @@ class HelpWindowManager:
                 # Not open yet, or still waiting for the initial timer
                 # (which will pick up the current layer when it fires).
                 return
+            if self._popup_gated and not self._popup_enabled_provider():
+                # popup_help was disabled after this session opened.
+                self._close_locked()
+                return
             self._show_current_locked()
 
     def close(self) -> None:
+        """Force-close the window (if any) and stop tracking layer changes.
+
+        Called both as the terminal step when a help file fails to resolve,
+        and on service shutdown to avoid leaking the detached subprocess.
+        """
         with self._lock:
-            self._active = False
-            if self._timer is not None:
-                self._timer.cancel()
-                self._timer = None
-            self._kill_proc()
+            self._close_locked()
+
+    def _close_locked(self) -> None:
+        self._active = False
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        self._kill_proc()
 
     def _on_timer(self) -> None:
         with self._lock:
@@ -521,23 +577,37 @@ class HelpWindowManager:
             if not self._active:
                 # Closed before the timer fired.
                 return
+            if self._popup_gated and not self._popup_enabled_provider():
+                # popup_help was disabled during the debounce delay.
+                self._close_locked()
+                return
             self._show_current_locked()
 
     def _show_current_locked(self, keys: Optional[str] = None) -> None:
         file_path = self._file_path_provider(keys)
         if file_path is None:
             log.warning("Cannot determine help file path (no app or layer info)")
+            self._close_locked()
             return
         self._spawn(file_path)
 
     def _spawn(self, file_path: str) -> None:
-        self._kill_proc()
         if not os.path.isfile(self._script_path):
             log.warning("Help window script not found: %s", self._script_path)
+            self._kill_proc()
             return
         if not os.path.isfile(file_path):
             log.warning("Help file not found: %s", file_path)
+            self._close_locked()
             return
+        if (
+            file_path == self._current_file
+            and self._proc is not None
+            and self._proc.poll() is None
+        ):
+            # Already showing this exact file → avoid a respawn flicker.
+            return
+        self._kill_proc()
         argv = [sys.executable, self._script_path, file_path]
         if self._verbose_provider():
             argv.append("--verbose")
@@ -547,9 +617,11 @@ class HelpWindowManager:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        self._current_file = file_path
         log.info("Help window opened: %s (pid=%d)", file_path, self._proc.pid)
 
     def _kill_proc(self) -> None:
+        self._current_file = None
         if self._proc is not None:
             if self._proc.poll() is None:
                 self._proc.terminate()
@@ -573,7 +645,6 @@ class KanataClient:
         self._on_app_callback = None
         self._on_reload_callback = None
         self._on_help_open_callback = None
-        self._on_help_close_callback = None
         self._on_set_callback = None
         self._on_unset_callback = None
         self._on_layer_change_callback = None
@@ -588,14 +659,10 @@ class KanataClient:
         self._on_reload_callback = callback
 
     def set_help_open_callback(self, callback):
-        """Set callback for OPEN_HELP push messages. Called with an optional
-        keys argument (str from "OPEN_HELP:<keys>", or None for plain
-        "OPEN_HELP")."""
+        """Set callback for POPUP_HELP / OPEN_HELP:<keys> push messages.
+        Called with an optional keys argument (str from "OPEN_HELP:<keys>",
+        or None for "POPUP_HELP")."""
         self._on_help_open_callback = callback
-
-    def set_help_close_callback(self, callback):
-        """Set callback for CLOSE_HELP push messages. Called with no arguments."""
-        self._on_help_close_callback = callback
 
     def set_layer_change_callback(self, callback):
         """Set callback for LayerChange messages. Called with no arguments
@@ -727,20 +794,21 @@ class KanataClient:
             if self._on_reload_callback:
                 self._on_reload_callback()
             return
-        if message == "OPEN_HELP" or message.startswith("OPEN_HELP:"):
-            keys = (
-                message[len("OPEN_HELP:") :].strip()
-                if message.startswith("OPEN_HELP:")
-                else None
-            )
+        if message == "POPUP_HELP":
+            log.info("KanataHelp popup")
+            if self._on_help_open_callback:
+                self._on_help_open_callback(None)
+            return
+        if message.startswith("OPEN_HELP:"):
+            keys = message[len("OPEN_HELP:") :].strip()
+            if not keys:
+                log.warning(
+                    "OPEN_HELP: received with no keys; use POPUP_HELP instead"
+                )
+                return
             log.info("KanataHelp open keys=%s", keys)
             if self._on_help_open_callback:
                 self._on_help_open_callback(keys)
-            return
-        if message == "CLOSE_HELP" or message.startswith("CLOSE_HELP:"):
-            log.info("KanataHelp close")
-            if self._on_help_close_callback:
-                self._on_help_close_callback()
             return
         if message.startswith("SET:"):
             name = message[len("SET:") :].strip()
@@ -1108,9 +1176,9 @@ def main():
         DEFAULT_HELP_WINDOW_SCRIPT,
         lambda keys=None: service.get_help_file_path(DEFAULT_HELP_FILES_DIR, keys),
         lambda: variables.get("verbose"),
+        lambda: variables.get("popup_help"),
     )
     kanata.set_help_open_callback(help_mgr.open)
-    kanata.set_help_close_callback(help_mgr.close)
     kanata.set_layer_change_callback(help_mgr.on_layer_change)
 
     # Publish DBus service (will listen to events from the dynamically injected
@@ -1134,6 +1202,7 @@ def main():
         injector.remove()
         if loop:
             loop.quit()
+        help_mgr.close()
         kanata.close()
         log.info("Service finished by user")
         sys.exit(0)

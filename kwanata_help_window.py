@@ -3,7 +3,8 @@
 kwanata_help_window.py — floating help popup for KWanata.
 
 Spawned as a subprocess by HelpWindowManager in kwanata.py when a
-OPEN_HELP:<filepath> push message arrives from Kanata.
+POPUP_HELP or OPEN_HELP:<keys> push message arrives from Kanata and
+resolves to an existing help file.
 
 Uses wlr-layer-shell (zwlr_layer_shell_v1) to create an OVERLAY surface:
   - Always on top of every regular window (compositor layer, not a hint)
