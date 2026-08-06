@@ -17,8 +17,9 @@ Renders the file with basic Markdown support:
   - list items    ---  horizontal rule
 
 A trailing "(...)" group on a line (e.g. the launched commands in
-"combo -- description (commands)") is treated as secondary detail: shown
-small and dimmed with --verbose, hidden otherwise.
+"combo -- description (commands)"), marked by kanata_gen_help.py with a
+leading \x1f, is treated as secondary detail: shown small and dimmed with
+--verbose, hidden otherwise.
 
 Requires gtk-layer-shell:
   Arch / CachyOS:  sudo pacman -S gtk-layer-shell
@@ -123,28 +124,25 @@ def _inline(escaped: str) -> str:
     return escaped
 
 
+# kanata_gen_help.py (kanata-utils) marks the label/detail boundary with this
+# byte rather than letting us guess it by counting parens: a detail can itself
+# contain literal "(" / ")" (e.g. a macro that types S-9/S-0, which render as
+# those very characters), which breaks any paren-balance heuristic. Keep this
+# in sync with that script's own _DETAIL_MARKER if it ever changes.
+_DETAIL_MARKER = "\x1f"
+
+
 def _split_trailing_parens(raw: str) -> tuple[str, str] | None:
-    """Split off a trailing, possibly nested, "(...)" group. Returns
-    (main, paren) or None if the line doesn't end with a balanced group."""
+    """Split off a trailing "(...)" detail group marked by _DETAIL_MARKER.
+    Returns (main, paren) or None if the line has no such marker."""
     line = raw.rstrip()
-    if not line.endswith(")"):
+    if _DETAIL_MARKER not in line:
         return None
-    depth = 0
-    i = len(line) - 1
-    while i >= 0:
-        if line[i] == ")":
-            depth += 1
-        elif line[i] == "(":
-            depth -= 1
-            if depth == 0:
-                break
-        i -= 1
-    if depth != 0 or i <= 0 or not line[i - 1].isspace():
+    main, _, paren = line.partition(_DETAIL_MARKER)
+    main = main.rstrip()
+    if not main or not paren.startswith("(") or not paren.endswith(")"):
         return None
-    main = line[:i].rstrip()
-    if not main:
-        return None
-    return main, line[i:]
+    return main, paren
 
 
 def _line_with_dim_trailing_parens(raw: str, show_details: bool) -> str:

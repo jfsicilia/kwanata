@@ -802,9 +802,7 @@ class KanataClient:
         if message.startswith("OPEN_HELP:"):
             keys = message[len("OPEN_HELP:") :].strip()
             if not keys:
-                log.warning(
-                    "OPEN_HELP: received with no keys; use POPUP_HELP instead"
-                )
+                log.warning("OPEN_HELP: received with no keys; use POPUP_HELP instead")
                 return
             log.info("KanataHelp open keys=%s", keys)
             if self._on_help_open_callback:
