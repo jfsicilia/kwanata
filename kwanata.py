@@ -19,7 +19,7 @@ import sys
 import tempfile
 import threading
 from queue import Empty, Queue
-from typing import Any, NoReturn
+from typing import Any, ClassVar, NoReturn
 
 import tomllib
 from gi.repository import GLib
@@ -97,12 +97,12 @@ class Variables:
     value) — unknown names are ignored (logged).
     """
 
-    DEFAULTS = {
+    DEFAULTS: ClassVar[dict[str, bool]] = {
         "verbose": False,
         # Gates POPUP_HELP only; OPEN_HELP:<keys> always works regardless.
         "popup_help": True,
     }
-    KNOWN = set(DEFAULTS)
+    KNOWN: ClassVar[set[str]] = set(DEFAULTS)
 
     def __init__(self):
         self._values = dict(self.DEFAULTS)
@@ -259,7 +259,7 @@ class KWinScriptInjector:
 
         try:
             scripting = self._bus.get(self.KWIN_BUS, self.SCRIPTING_PATH)
-        except Exception as e:
+        except GLib.Error as e:
             log.warning("Cannot reach KWin Scripting DBus: %s — skipping injection", e)
             return False
 
@@ -290,7 +290,7 @@ class KWinScriptInjector:
             log.info("Unloaded KWin script '%s': %s", self._script_path, result)
             self._script_path = None
             return result
-        except Exception as e:
+        except GLib.Error as e:
             log.warning("Failed to unload KWin script: %s", e)
             return False
 
@@ -327,7 +327,7 @@ class AppRunner:
                 template = f.read()
             log.info("Loaded raise script template from %s", abs_path)
             return template
-        except Exception as e:
+        except OSError as e:
             log.warning("Failed to load raise script template %s: %s", abs_path, e)
             return None
 
@@ -349,7 +349,7 @@ class AppRunner:
                 }
             if self._entries:
                 log.info("Loaded %d run_or_raise entries", len(self._entries))
-        except Exception as e:
+        except (OSError, tomllib.TOMLDecodeError) as e:
             log.warning("Failed to load run_or_raise config: %s", e)
 
     def on_raise_result(self, success):
@@ -405,21 +405,21 @@ class AppRunner:
         script_content = script_content.replace("__CAPTION__", app_caption)
         self._raise_event.clear()
         self._raise_success = False
-        tmp = None
+        tmp_path = None
         try:
-            tmp = tempfile.NamedTemporaryFile(
+            with tempfile.NamedTemporaryFile(
                 delete=False, suffix=".js", prefix="kwanata_raise_"
-            )
-            tmp.write(script_content.encode("utf-8"))
-            tmp.close()
+            ) as tmp:
+                tmp_path = tmp.name
+                tmp.write(script_content.encode("utf-8"))
 
             scripting = self._bus.get(
                 KWinScriptInjector.KWIN_BUS, KWinScriptInjector.SCRIPTING_PATH
             )
-            script_id = scripting.loadScript(tmp.name)
+            script_id = scripting.loadScript(tmp_path)
             if script_id == -1:
-                scripting.unloadScript(tmp.name)
-                script_id = scripting.loadScript(tmp.name)
+                scripting.unloadScript(tmp_path)
+                script_id = scripting.loadScript(tmp_path)
             if script_id == -1:
                 log.error(
                     f"Failed to load raise script for class:'{app_class}' caption:'{app_caption}'",
@@ -430,7 +430,7 @@ class AppRunner:
                 KWinScriptInjector.KWIN_BUS, f"/Scripting/Script{script_id}"
             )
             script_obj.run()
-            scripting.unloadScript(tmp.name)
+            scripting.unloadScript(tmp_path)
 
             # Wait for the KWin script to send back the raise result via DBus.
             if self._raise_event.wait(timeout=self.RAISE_TIMEOUT):
@@ -438,14 +438,14 @@ class AppRunner:
             else:
                 log.warning("Timeout waiting for raise result from KWin")
                 return False
-        except Exception as e:
+        except (OSError, GLib.Error) as e:
             log.error(
                 f"Failed to load raise script for class:'{app_class}' caption:'{app_caption}': {e}"
             )
             return False
         finally:
-            if tmp and os.path.exists(tmp.name):
-                os.unlink(tmp.name)
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
 
 # ----------------------------
@@ -927,7 +927,7 @@ class AppMatcher:
                     self._apps_rules.append(rule)
                     log.debug(f"Loaded rule: {rule}")
             log.info(f"Loaded {len(self._apps_rules)} rules from {filepath}")
-        except Exception as e:
+        except (OSError, tomllib.TOMLDecodeError, re.error) as e:
             log.info(f"Failed to load config file: {filepath} {e}. Running dry.")
 
     def find_match(
