@@ -19,7 +19,7 @@ import sys
 import tempfile
 import threading
 from queue import Empty, Queue
-from typing import Any, Dict, NoReturn, Optional, Tuple, Union
+from typing import Any, NoReturn
 
 import tomllib
 from gi.repository import GLib
@@ -153,7 +153,7 @@ class utils:
         return not s.strip()
 
     @staticmethod
-    def validate_port(port: Union[int, str]) -> tuple[str, int]:
+    def validate_port(port: int | str) -> tuple[str, int]:
         """Validate a port number or an IP:PORT combination and return (host, port)."""
         port_str = str(port)
         if utils._is_valid_port(port_str):
@@ -169,7 +169,7 @@ class utils:
         )
 
     @staticmethod
-    def _is_valid_port(port: Union[int, str]) -> bool:
+    def _is_valid_port(port: int | str) -> bool:
         if isinstance(port, int):
             return 0 < port <= 65535
         if isinstance(port, str) and port.isdigit():
@@ -198,7 +198,7 @@ class utils:
 
     @staticmethod
     def validate_fake_key(
-        fake_key: tuple[str, str], rule_no: Optional[int]
+        fake_key: tuple[str, str], rule_no: int | None
     ) -> tuple[str, str]:
         """Validates if it's a valid virtual key / action."""
         name, action = fake_key
@@ -507,9 +507,9 @@ class HelpWindowManager:
         self._file_path_provider = file_path_provider
         self._verbose_provider = verbose_provider or (lambda: False)
         self._popup_enabled_provider = popup_enabled_provider or (lambda: True)
-        self._proc: Optional[subprocess.Popen] = None
-        self._current_file: Optional[str] = None
-        self._timer: Optional[threading.Timer] = None
+        self._proc: subprocess.Popen | None = None
+        self._current_file: str | None = None
+        self._timer: threading.Timer | None = None
         self._active = False
         # Whether the current/pending active session was started by a plain
         # POPUP_HELP (True, so it must keep honoring popup_help on every
@@ -517,7 +517,7 @@ class HelpWindowManager:
         self._popup_gated = False
         self._lock = threading.Lock()
 
-    def open(self, keys: Optional[str] = None) -> None:
+    def open(self, keys: str | None = None) -> None:
         with self._lock:
             if keys is not None:
                 # Keys given explicitly (OPEN_HELP:<keys>) → no race with a
@@ -583,7 +583,7 @@ class HelpWindowManager:
                 return
             self._show_current_locked()
 
-    def _show_current_locked(self, keys: Optional[str] = None) -> None:
+    def _show_current_locked(self, keys: str | None = None) -> None:
         file_path = self._file_path_provider(keys)
         if file_path is None:
             log.warning("Cannot determine help file path (no app or layer info)")
@@ -635,7 +635,7 @@ class HelpWindowManager:
 class KanataClient:
     """TCP client for communicating with kanata."""
 
-    def __init__(self, addr: Tuple[str, int]):
+    def __init__(self, addr: tuple[str, int]):
         self.addr = addr
         self._client: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._connected = False
@@ -648,7 +648,7 @@ class KanataClient:
         self._on_set_callback = None
         self._on_unset_callback = None
         self._on_layer_change_callback = None
-        self.current_layer: Optional[str] = None
+        self.current_layer: str | None = None
 
     def set_app_callback(self, callback):
         """Set callback for APP: push messages. Called with app name as argument."""
@@ -699,7 +699,7 @@ class KanataClient:
             # anything, so issue a harmless query to satisfy that requirement.
             self.get_current_layer_name()
 
-        except socket.error as e:
+        except OSError as e:
             ip, port = self.addr
             utils.fatal(
                 "Kanata connection error: %s — make sure kanata is running with the -p option "
@@ -739,7 +739,7 @@ class KanataClient:
                     line = line.strip()
                     if line:
                         self._process_incoming_line(line)
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 if self._running:
@@ -823,7 +823,7 @@ class KanataClient:
 
         log.info("KanataMsg: %s", message)
 
-    def send(self, cmd: dict) -> Optional[str]:
+    def send(self, cmd: dict) -> str | None:
         """
         Send a JSON command to Kanata and return the response.
 
@@ -848,7 +848,7 @@ class KanataClient:
         data = self._parse_json_response(self.send({"RequestCurrentLayerName": {}}))
         return data.get("CurrentLayerName", {}).get("name")
 
-    def get_current_layer_info(self) -> Optional[Dict[str, str]]:
+    def get_current_layer_info(self) -> dict[str, str] | None:
         data = self._parse_json_response(self.send({"RequestCurrentLayerInfo": {}}))
         return data.get("CurrentLayerInfo")
 
@@ -880,7 +880,7 @@ class KanataClient:
         x, y = pos
         self._parse_json_response(self.send({"SetMouse": {"x": x, "y": y}}))
 
-    def _parse_json_response(self, response: Optional[str]) -> Dict[str, Any]:
+    def _parse_json_response(self, response: str | None) -> dict[str, Any]:
         if response:
             try:
                 return json.loads(response)
@@ -932,7 +932,7 @@ class AppMatcher:
 
     def find_match(
         self, win_name, win_class, win_caption
-    ) -> Tuple[Optional[str], Optional[str]]:
+    ) -> tuple[str | None, str | None]:
         """Return (layer, virtual_keys) for the first matching rule.
 
         Rules are checked in config.toml order — first match wins.
@@ -989,9 +989,7 @@ class KWanataService:
         """Set the AppRunner instance to receive raise results."""
         self._app_runner = app_runner
 
-    def get_help_file_path(
-        self, help_dir: str, keys: Optional[str] = None
-    ) -> Optional[str]:
+    def get_help_file_path(self, help_dir: str, keys: str | None = None) -> str | None:
         """Derive the help file path from the current active app and either
         the given keys or the current Kanata layer.
 
